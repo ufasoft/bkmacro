@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+
+<html lang="ru">
+<head>
+	<title>Ufasoft BkMacro - IDE for БК-0010.01</title>
+	<meta charset="UTF-8">
+	<meta name="description" content="Ufasoft BkMacro - Editor & MACRO-11 Assembler для БК-0010.01. Руководство">
+	<meta name="keywords" content="MACRO-11, БК-0010">
+	<meta name="author" content="Sergey Pavlov">
+
+    <style>
+    	.clhs {
+    		float: right;
+    	}
+
+    	.rt11 {
+    		float: right;
+    		margin-right: 10px;
+    	}
+
+    	.index {
+    		column-width: 15em;
+    		column-count: auto;
+    	}
+
+    	.index a {
+    		display: block;
+			font-size: 70%;
+    	}
+
+    	.bibliography {
+			font-size: 70%;
+    	}
+    </style>
+</head>
+
+<body>
+
+<article>
+
+<h1>Ufasoft BkMacro - IDE for БК-0010.01<br>
+Руководство
+</h1>
+<i>Версия 2024.4</i>
+<p>Текстовый Редактор и ассемблер для микро-компьютеров <a href="https://ru.wikipedia.org/wiki/БК_(семейство_компьютеров)">БК-0010.01</a>
+архитектуры <a href="https://ru.wikipedia.org/wiki/PDP-11">PDP-11</a>, на процессоре <a href="https://ru.wikipedia.org/wiki/К1801ВМ1">К1801ВМ1</a>.
+
+<div>
+	<img src="bkmacro.png" width="512" heigth="256" />
+</div>
+
+<h2>История</h2>
+<p>Проект был начат в 1990 г. как школьный. Из-за отсутствия у автора дисковода понадобилась IDE, так как загружать Редактор и Ассемблер по очереди с магнитофона неудобно.
+<p>В 1991-м достиг компилируемости на самом себе.
+<p>В 2023-м разработка продолжена с добавлением Макросов.
+
+<h2>Где скачать</h2>
+<p>Бинарный файл <a href="/files/bk/macro.bin">macro.bin</a>
+<p>Для запуска требуется конфигурация БК-0010.01 с ПЗУ Вильнюс Бейсик.
+<p>Исходники будут выложены после реализации Макросов
+
+<h2>Редактор</h2>
+
+<h3>Клавиатурные комбинации</h3>
+
+<table>
+	<tr><td>ШАГ</td>	<td>Page Up</td></tr>
+	<tr><td>СБР</td>	<td>Page Down</td></tr>
+	<tr><td>AP2-СБР</td><td>Bottom</td></tr>
+	<tr><td>ВС</td>		<td>Start of line</td></tr>
+	<tr><td>AP2-BC</td>	<td>End of line</td></tr>
+	<tr><td>AP2-2</td>	<td>Save .MAC file</td></tr>
+	<tr><td>AP2-3</td>	<td>Open .MAC file</td></tr>
+	<tr><td>AP2-4</td>	<td>Exit</td></tr>
+	<tr><td>AP2-5</td>	<td>Run</td></tr>
+	<tr><td>AP2-7</td>	<td>Compile & Save .BIN</td></tr>
+	<tr><td>KT</td>		<td>Copy</td></tr>
+	<tr><td>СУ-B</td>	<td>Paste</td></tr>
+	<tr><td>СУ-U</td>	<td>Cut</td></tr>
+	<tr><td>СУ-F</td>	<td>Поиск</td></tr>
+	<tr><td>СУ-G</td>	<td>Продолжить поиск</td></tr>
+	<tr><td>СТОП</td>	<td>Прерывание/Отмена и возврат в Редактор</td></tr>
+</table>
+
+<h2>Макро-Ассемблер</h2>
+<p>BkMacro реализует подмножество языка <a href="https://en.wikipedia.org/wiki/MACRO-11">MACRO-11</a>.
+<p>Как руководство и справочник можно использовать оригинальную документацию <a
+href="https://bitsavers.org/pdf/dec/pdp11/rsts_e/V09/7_MACRO_Programming/AA-KX10A-TC_RSTS_E_V9.5_PDP-11_MACRO-11_Language_Reference_Oct87.pdf">MACRO-11 Language Reference Manual</a>.
+<p>Поддерживаются директивы:<br/>
+<b>.ASCII</b>, <b>.ASCIZ</b>, <b>.BLKB</b>, <b>.BLKW</b>, <b>.BYTE</b>, <b>.DSABL</b>
+<b>.ENABLE</b>, <b>.END</b>, <b>.ENDC</b>, <b>.ENDM</b>, <b>.ENDR</b>, <b>.ERROR</b>, <b>.EVEN</b>,
+<b>.FLT2</b>, <b>.FLT4</b>,
+<b>.IF</b>, <b>.IFF</b>, <b>.IFT</b>, <b>.IFTF</b>, <b>.IIF</b>, <b>.IRPC</b>,
+<b>.MACRO</b>, <b>.MEXIT</b>, <b>.NCHR</b>, <b>.NTYPE</b>
+<b>.ODD</b>, <b>.RAD50</b>, <b>.RADIX</b>, <b>.REM</b>, <b>.WORD</b>
+
+<p>Не поддерживаются директивы:<br/>
+<b>.ASECT</b>, <b>.CROSS</b>, <b>.CSECT</b>, <b>.GLOBL</b>, <b>.IDENT</b>, <b>.INCLUDE</b>, <b>.LIBRARY</b>, <b>.LIMIT</b>, <b>.LIST</b>, <b>.MCALL</b>, <b>.MDELETE</b>,
+<b>.NLIST</b>, <b>.NOCROSS</b>, <b>.PACKED</b>, <b>.PAGE</b>, <b>.PRINT</b>, <b>.PSECT</b>, <b>.RESTORE</b>, <b>.SAVE</b>, <b>.SBTTL</b>, <b>.TITLE</b>, <b>.WEAK</b>
+
+<p>Поддерживаются операции в выражениях:<br/>
+<b>+</b>, <b>-</b>, <b>*</b>, <b>/</b>, <b>&</b>, <b>!</b>, <b>&lt;<i>expr</i>&gt;</b>,<br/>
+<b>^B</b>, <b>^C</b>, <b>^D</b>, <b>^F</b>, <b>^O</b>, <b>^R</b>, <b>^X</b><br/>
+
+<p>Числовые обозначения регистров<br/>
+<b>%0</b>..<b>%7</b> эквивалентны <b>R0</b>..<b>PC</b>. Номер регистра можно вычислять, например <code>CLR %1+N </code>
+
+<p>В директивах <b>.IF</b>, <b>.IIF</b> поддерживаются виды условий:<br/>
+<b>B</b>, <b>NB</b>, <b>EQ</b>, <b>NE</b>, <b>GT</b>, <b>LE</b>, <b>LT</b>, <b>GE</b>, <b>DF</b>, <b>NDF</b>, <b>P1</b>, <b>P2</b>
+
+<p>В директивах <b>.ENABL</b>, <b>.DSABL</b> поддерживаются флаги:<br/>
+<ul>
+	<li><b>AMA</b> - Включение режима абсолютной адресации <b>37</b> вместо <b>67</b>.
+</ul>
+
+<h3>Коды ошибок</h3>
+<p>По возможности поддерживаются стандартные буквенные обозначения ошибос MACRO-11.
+<p>Дополнительные коды:
+<ul>
+	<li><b>ОШИБКА F</b> - Не хватает памяти, буфер бинарника перекрывается с буфером текстового редактора.
+</ul>
+
+<h3>Ограничения</h3>
+<p>В отличие от MACRO-11, где строки разделяются кодами <b>CRLF</b>, допускается только разделитель <b>LF</b>.
+<p>Минимальный адрес начала программы: <b>770</b><sub>8</sub>. По умолчанию начальный адрес <b>1000</b><sub>8</sub>.<br/>
+Для его изменения надо указать метку в директиве <b>.END</b>.
+<pre>
+. = 770
+START:
+    ...
+
+    .END	START
+</pre>
+
+<div style="margin-top: 20px;"><i>&copy; 1990-2024 Ufasoft, Sergey Pavlov</i></div>
+</body>
+</html>

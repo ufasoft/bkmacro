@@ -1,0 +1,454 @@
+;;; (c) 1990-2024 Ufasoft https://ufasoft.com, Sergey Pavlov mailto:dev@ufasoft.com
+;;;
+;;; SPDX-License-Identifier: MIT
+;;;
+;;; BkMacro. BK-0010.01 Macro Assembler
+;;;	Editor module
+
+;;  Begin or continue selection
+.MACRO	.SEL
+	TRAP	105
+.ENDM
+
+.MACRO	.CLSEL
+	TRAP	107
+.ENDM
+
+;; Returns: R1: Calculated column of cursor in R3
+.MACRO	.CACOL
+	TRAP	104
+.ENDM
+
+;; Position R1 to col in R0
+;; Considers \t
+;; Exists early on \n
+.MACRO	.POCOL
+	TRAP	132
+.ENDM
+
+.MACRO	.SUBR	a
+	TRAP	133
+	.WORD	a
+.ENDM
+
+A.VIEW	= 42701
+
+CURCOL	= 0
+KEYHLD	= 2	; Byte flag: the key is pressed
+
+;; Selection
+;SEL:	.WORD	0
+;ESEL:	.WORD	0
+
+SEL	= 230
+ESEL	= 232
+
+STRBUF = 326
+
+;; Clipboard
+CLPMAX	= 400
+CLPBRD	= 1000
+
+
+;; Window size
+COLS 	= 32.
+ROWS 	= 21.
+ROWHEI	= 9.	; Height of Row in Pixels
+
+EDITOR:	MOV	#ERRNO, R3
+	TSTB	(R3)		; ERRNO
+	BEQ	1$
+	MOV	#$ERROR, R1
+	MOV	#8., R2
+	EMT	20		; Print "ERROR "
+	MOVB	(R3), R0	; R0: ERRNO
+	ADD	#'@, R0
+	.TTYOUT
+	CLRB	(R3)		; ERRNO
+1$:	MTPS	(R3)
+	TST	$KBDAT		; Enable Keyboard interrupts
+	CLRB	$TKEY		; !!!?
+	PUSH	#3, (SP)
+	MOV	#<COLS + 1> * 8. + 3, -(SP)
+	MOV	#<ROWS + 1> * ROWHEI + 3, R4
+	JSR	R4, $RECT	; Draw Editor frame
+	.WORD	. + 2
+EDIT2:	MOV	CURSOR, R3
+	MOV	R3, (SP)	; (SP): Cursor
+	MOV	#ETEXT, R0
+	CMP	R3, (R0)+	; R0: &TEXT
+	BHI	EDIT		; Cursor is out of bounds
+	CMP	R3, (R0)
+	BLO	EDIT		; Cursor is out of bounds
+	MOV	R3, CURSOR
+;; Text Editor
+EDIT:	MOV	(R0)+, R4	; R4: TEXT
+	MOV	(R0), R3	; R3: CURSOR
+	CLR	R5		; R5: row counter (1..)
+1$:	MOV	R4, R1
+	INC	R5
+2$:	CMPB	(R4)+, #C.NL
+	BNE	2$
+	CMP	R4, R3
+	BLOS	1$
+	CLR	R4		; R5: cursor row
+	.CACOL			; R1: cursor column
+	MOV	R1, R4		;!!!O R4: cursor column
+PAINT:  SUB	(PC)+, R5	; R5: row relative to View
+VIEROW:	.WORD	1		; View row
+	BLO	5$
+	SUB	#ROWS-1, R5
+	BLO	6$
+5$:	ADD	R5, VIEROW
+6$:	SUB	VIECOL, R4
+	BLOS	7$
+	SUB	#COLS-1, R4
+	BLO	8$
+7$:	ADD	R4, VIECOL
+	MOV	VIECOL, EVICOL
+	ADD	#COLS, EVICOL
+8$:	MOV	VIEROW, R4
+	MOV	-(R0), R1	; R1: TEXT
+	DEC	R1
+9$:	CMPB	(R1)+, #C.NL
+	BNE	9$
+	SOB	R4, 9$		; R1: start of View
+	MOV	#A.VIEW, R5	; R5: address if View area
+;; R4: 0
+NXTROW:	MOV	(PC)+, R0
+VIECOL:	.WORD	0		; View column
+	MOV	R0, (R4)	; CURCOL = VIECOL
+	INC	(R4)
+	.POCOL
+;; R4: 0
+;; Paint View
+DON:	CLR	R2		; R2: Cursor XOR mask
+	CMP	R1, (SP)	; (SP): Cursor or 0
+	BNE 	1$
+	COM	R2		; R2: inversed Cursor XOR mask
+	CLR	(SP)		; Draw cursor only once
+1$:	MOV     #$FONT+1+<16.*10.>, R0	; R0: Address of Space in Font
+	CMPB	(R1), #C.NL
+	BHIS	5$
+;; Render `\t`
+	BITB	#7, (R4)	; CURCOL & 7
+	BNE 	RENSEL		; ($4 - 6$) must be 7
+6$:	BR	7$
+5$:     BEQ	RENSEL		; \n
+2$:	MOVB	(R1), R4	; R4: char code
+	BPL	3$
+	SUB	#177440, R4	; R4 -= 40  Skip codes 200..237, absent in Font
+3$:	MOV	R4, R0
+	ASL	R0
+	ASL	R0
+	ADD 	R4, R0
+	ASL	R0    		; R0: position * 10.
+	ADD	#$FONT+1-<16.*10.>, R0
+7$:	INC	R1
+;; Render char
+;; R0: address of 10. bytes in the $FONT array
+;; R3: address of cursor
+RENSEL:	CMP	R1, ESEL
+	BHI	4$
+	CMP	SEL, R1
+	SXT	R2		; Invert selection area
+4$:
+
+;	MOV	#4, R4
+;1$:	MOV	(R0)+, R3
+;	XOR	R2, R3
+;	MOVB	R3, (R5)
+;	SWAB	R3
+;	MOVB	R3, 100(R5)
+;	ADD	#200, R5
+;	SOB 	R4, 1$
+
+	MOV	#9., R4
+1$:	MOVB	(R0)+, R3
+	XOR	R2, R3
+	MOVB	R3, (R5)
+	ADD	#100, R5
+	SOB 	R4, 1$
+
+	SUB	#<9.*100>-1, R5	; R5: point to screen memory for next char
+	INC	(R4)		; ++CURCOL
+	CMP	(R4), (PC)+
+EVICOL:	.WORD	0		; Right bound of View
+	BLOS	DON
+
+2$:	CMP	R1, ETEXT
+	BHIS	3$
+	CMPB	(R1)+, #C.NL	; Skip rest of line
+	BNE	2$
+3$:	ADD	#ROWHEI*100-COLS, R5
+	CMP	R5, #A.VIEW + <ROWS * ROWHEI * 100>
+	BLO	NXTROW
+;; Wait for Key
+INKEY:	MOV	#KEYHLD, R2
+5$:	TSTB	$AP2LE
+	BNE	2$
+	TSTB	$TKEY
+	BNE	2$
+	TSTB	(R2)
+	BEQ	5$		; Don't check keyboard register
+	BIT	#$KBKEY, $SYREG
+	BEQ	6$      	; Key is still pressed
+	CLRB	(R2)		; KEYHLD = false
+	BR	5$
+6$:	CALL	$EMT6A
+	BR	3$
+2$:	EMT	6		; R0: key
+	INCB	(R2)		; KEYHLD = true
+3$:
+	MOV	#TEXT, R2	; R2: &TEXT for usage by handlers
+	MOV	CURSOR, R3	; R3: Cursor
+	PUSH    #EDIT2		; Return address
+	MOV	R0, R1
+	MOV	ESEL, R4
+	MOV	#C.NL, R5	; R5: \n for usage by handlers
+	BITB	#140, R0
+	BEQ	CTLKEY
+NL:;	ADD	#C.NL-$K.NL+$K.TAB-C.HT, R0	; R0: \n
+HT:;	ADD	#C.HT-$K.TAB, R0		; R0: \t
+;; printable char
+LIT:	CMP	(R2), #LTEXT	; TEXT < #LTEXT ?
+	BLOS	9$		; out-of-memory
+	DEC	(R2)		; --TEXT
+	MOV	(R2), R5	; R5: address of pre-text \n
+1$:	MOVB	(R5)+, -2(R5)	; Shift text for inserted char
+	CMP	R5, R3
+	BLO	1$
+	MOVB	R0, -(R5)	; Insert char
+9$:	BR	CLSE.R
+
+RUN:	CALL	ASSEMB
+	EMT	14
+	MOV	4, 10		; Break on invalid opcodes
+	CALL	@B.BIN		; CALL @B.BIN
+	.TTYIN			; Wait for any key
+	HALT
+
+COPY:	MOV	SEL, R5
+	SUB	R5, R4
+	BEQ	9$
+        CMP	R4, #CLPMAX
+        BHI	9$
+        MOV	R4, CLPSIZ
+1$:	MOVB	(R5)+, CLPBRD-1(R4)
+	SOB	R4, 1$
+9$:	RETURN
+
+SELALL:	MOV	(R2), SEL	; SEL = TEXT
+	MOV	-(R2), ESEL	; ESEL = ETEXT
+	RETURN
+
+;; Save source code to file
+SAVE:	MOV	#SAVE11, R1
+	MOV	ETEXT, (R1)
+	SUB	(R2), (R1)		; SAVE11 = Text length
+	MOV	(R2), -(R1)		; SAVEA = TEXT
+SAVEA	= . + 4
+SAVE11	= . + 6
+;; Order does matter, used in `END`
+B.BIN	= . + 4				; Entry Point and start address for .BIN file saving
+LENBIN	= . + 6
+SAVE1:	.FILE	2, 10000, 0
+	RETURN
+
+LDBUF	= 1000
+LOAD:   .FILE 	3, LDBUF
+	MOV	ETEXT, R3		; R3: ETEXT
+	MOV	$TSIZE, R4
+	INC	R4
+1$:	MOVB	LDBUF-2(R4), -(R3)
+	SOB	R4, 1$
+	MOVB	R5, (R3)+		; pre-Text \n
+	MOV	R3, (R2)		; TEXT = R3
+RET.1:	RETURN
+
+COMPIL:	; MOV	#<B.BIN - TRAN - 4>, TRAN+2
+	CALL	ASSEMB
+	CALL	SAVE1
+	HALT				; Reset to Editor after saving
+
+PASTE:	TST	R4
+	BEQ	1$		; Selection is empty
+	CALL	DEL
+1$:	MOV	CLPSIZ, R5
+	BEQ	9$
+2$:	MOVB	CLPBRD-1(R5), R0
+	.SUBR	LIT
+	SOB	R5, 2$
+9$:	RETURN
+
+CTLKEY:	.SWITCH
+	.WORD	9$-.-2/2
+	.CASE	<'A-'@>, SELALL		; ^A
+	.CASE	<'B-'@>, PASTE		; ^B
+	.CASE	<'C-'@>, COPY		; ^C
+	.CASE	$K.LE, LE
+	.CASE	$K.TAB, HT		; 11
+	.CASE	$K.NL, NL		; 12
+	.CASE	$K.CLS, PGDN        	; 14
+	.CASE	$K.BC, HOME		; 23
+	.CASE	<'U-'@>, CUT		; ^U
+	.CASE	237, COMPIL		; AP2-7
+	.CASE	$K.DEL, DEL		; 26
+	.CASE	$K.INS, INS
+	.CASE	$K.BS, BS
+	.CASE	$K.RI, RI
+	.CASE	$K.UP, UP
+	.CASE	$K.DO, DN
+	.CASE	202, SAVE		; AP2-2
+	.CASE	$K.STP, PGUP
+	.CASE	200+$K.BC, ENDROW	; 223
+	.CASE	200+$K.CLS, BOTTOM	; AP2-CLS
+	.CASE	200+$K.DEL, DELROW	; 226
+	.CASE	200+$K.BS, AP.LE	; 230
+	.CASE	200+$K.RI, AP.RI
+	.CASE	200+$K.UP, AP.UP
+	.CASE	200+$K.DO, AP.DN
+	.CASE	234, EXIT		; AP2-4
+	.CASE	235, RUN		; AP2-5
+	.CASE	236, LOAD		; AP2-3
+	.CASE	<'F-'@>, SEARCH		; ^F
+	.CASE	<'G-'@>, FIND		; ^G - Search again
+9$:	RETURN
+
+EXIT:	.EXIT
+
+
+
+CUT:	.SUBR	COPY
+DEL:	TST	R4
+	BEQ	BS4		; Selection is empty
+	MOV	R4, R3		; Cursor: end of selection
+	SUB	SEL, R4		; number of chars to delete
+1$:	.SUBR	BS
+	SOB	R4, 1$
+CLSE.R:	.CLSEL
+	RETURN
+
+;; Select the current Row and Delete it
+DELROW: CMP	R3, ETEXT
+        BHIS	2$
+	CMPB	(R3)+, R5
+	BNE	DELROW
+2$:	MOV	R3, R4
+	CMP	R3, (R2)	; CMP R3, TEXT
+	BEQ	CLSE.R		; Nothing to remove
+1$:	DEC	R3
+	CMPB	-1(R3), R5
+	BNE	1$
+	MOV	R3, SEL
+	BR	DEL
+
+BS4:	CMP 	R3, ETEXT
+	BEQ	RET.3
+	INC	R3
+;; Backspace
+BS:	MOV	R3, R4
+	MOV 	R4, R5
+	SUB	(R2), R5	; R5 = R5-TEXT: length of text before Cursor
+	BEQ	RET.3		; At beginning of Text
+BS2:	MOVB	-2(R4), -(R4)
+	SOB	R5, BS2
+BS3:	INC	R4
+	MOV	R4, (R2)	; TEXT = R4
+	BR	R.MOVE
+
+INS:;!!!TODO
+
+HOME:	CMPB 	-(R3), R5
+	BNE	HOME
+RI:	.CLSEL
+RI1:	INC	R3
+R.MOVE: CMP	R3, (R2)	; (R2): TEXT
+	BLO	R.MOV1
+ 	CMP	R3, -(R2)	; R2: &ETEXT
+	BLO	R.MOV8
+R.MOV1:	MOV	(R2), R3
+R.MOV8:	MOV	R3, CURSOR
+RET.3:	RETURN
+
+;; To the end of row
+ENDROW:	CMPB 	(R3)+, R5
+	BNE	ENDROW
+LE:	.CLSEL
+LE1:	DEC	R3
+	BR	R.MOVE
+
+;; AP2-Left handler
+AP.LE:	.SEL
+	CALL	LE1
+AP.LE1:	MOV	R3, SEL
+	RETURN
+
+
+;; AP2-Right handler
+AP.RI:	.SEL
+	CALL	RI1
+AP.R1:	MOV	R3, ESEL
+	RETURN
+
+
+;; AP2-Up handler
+AP.UP:	.SEL
+	CALL	UP1
+	BR	AP.LE1
+UP:	.CLSEL
+UP1:    .CACOL			; R1: Column
+1$:	CMPB	-(R3), R5
+	BNE	1$
+	CMP	R3, (R2)
+	BLO	R.MOVE
+2$:	CMPB	-(R3), R5
+	BNE	2$
+;; R3: \n before beginning of prev line
+	INC	R3
+	BR	DN2
+
+;; AP2-Down handler
+AP.DN:	.SEL
+	CALL	DN1
+	BR	AP.R1
+
+PGUP:	PUSH	#UP
+	BR	PG
+PGDN:	PUSH	#DN
+PG:	MOV	#ROWS, R4
+1$:	PUSH	R2
+	CALL	@2(SP)
+	POP	R2
+	SOB	R4, 1$
+	TST	(SP)+
+	RETURN
+
+DN:	.CLSEL
+DN1:    .CACOL			; R1: Column
+1$:	CMPB	(R3)+, R5
+	BNE	1$
+	CMP	R3, ETEXT
+	BHIS	R.MOVE
+	; R3: beginning of next row
+DN2:	MOV	R1, R0
+	MOV	R3, R1
+	.POCOL
+	MOV	R1, R3
+	BR	R.MOVE
+BOTTOM:	TST	-(R2)		; R2: #ETEXT
+TOP:	.CLSEL
+	BR	R.MOV1
+
+
+SEARCH: .ASK	<"Search:">
+FIND:	MOV	#STRBUF, R4
+	INC	R3
+	MOV	R3, R1
+1$:	CMP	R1, ETEXT
+	BHIS	CLSE.R
+	TSTB	(R4)
+	BEQ	R.MOVE
+	CMPB	(R1)+, (R4)+
+	BEQ	1$
+	BR	FIND

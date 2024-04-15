@@ -1,0 +1,2129 @@
+;;; (c) 1990-2024 Ufasoft https://ufasoft.com, Sergey Pavlov mailto:dev@ufasoft.com
+;;;
+;;; SPDX-License-Identifier: MIT
+;;;
+;;; BkMacro. BK-0010.01 Macro Assembler
+
+.TITLE	BK MACRO-11
+
+.INCLUDE /defcfg.inc/
+.IIF NE C$RT11	.INCLUDE /rt11.inc/
+.IIF NE C$BK10	.INCLUDE /bk1001.inc/
+.IIF NE C$BK11	.INCLUDE /bk11.inc/
+
+MAXLIN	= 132.		; Max line length during Macro expansion
+MAXNES	= 16.		; Max nesting level
+
+
+;; Clear before every Translations Pass
+
+ASTKLO	= 320
+ASTKUP	= 760		; Leave space for self-runnned executables
+STATE	= 760
+AMA	= 760		; Byte
+ERRNO	= 764		; Byte, Errno
+CLPSIZ	= 766
+ESTATE	= 770
+A.STA	= 1000		; Default start address
+LTEXT	= 2000
+
+
+FNLEN	= 316
+A.FILE	= 320
+
+
+TMAC	= 60000		; Macros
+
+;; Local Labels Region. Grows downward
+TLCL	= 72460		; == 30000. Used to init MACLCL
+
+;!!!R MACARG	= 60000		; Macro arguments
+
+EXPBUF	= 73000		; Macro expansion buffer
+
+
+;;--- Must be Adjacent
+MEXPLV	= 77725		; Byte. Macro expansion level
+MARGS	= 77726		; Pointer to Macro expansion args in Stack
+
+TMPFLT	= 77730		; For double represenation
+UBIN	= 77740		; Upper bound of Binary
+SAVCUR	= 77742		; Cursor before Symbol
+R50LIM	= 77744		; Byte. Delimiter char in .RAD50
+NESTLV	= 77746		; Word, FLSLV or MACLV
+FLSLV	= 77746		; Byte, - (Negative) Level of nesting inside false .IF branch
+MACLV	= 77747		; Byte, - (Positive) Level of nesting inside Repeat or Macro blocks
+
+CNDMSK	= 77750		; 16 Condition results. Bit 15 is current.  0: true, 1: false
+CNDMOD	= 77752		; bool, Current condition state 0: true, non 0: false
+CURMAC	= 77754		; Symbol name of the current Macro
+
+PASSN	= 77757		; Byte. Pass number: 0 or 1
+
+SYNAM0	= 77760		; 1st RADIX-50 word of parsed Symbol
+SYNAM1	= 77762		; 2nd RADIX-50 word of parsed Symbol
+			; Some space for reading long Symbos, ignored
+			; At the end of RAM to catch Bus fault on long Symbols
+
+.IIF NE C$BK10   URAM = 100000	; Upper bound of RAM
+
+.MACRO	.ERR	x
+	TRAP	''x - '@
+.ENDM
+
+
+
+;; Classify char in (R3)
+;; OTHER handler
+;; . or $
+;; LETTER handler
+;; DIGIT handler
+.MACRO	.CHCLS
+	TRAP	116
+.ENDM
+
+;; ROM Basic-compatible char classifier
+;; RETURNS: R4: char
+;; OTHER handler
+;; LETTER handler
+;; DIGIT handler
+.MACRO	.CHCLB
+	TRAP	102		; hardcoded
+.ENDM
+
+;; Set cursor at the bottom of screen
+.MACRO 	.CURBO
+	TRAP	103
+.ENDM
+
+.MACRO	.ATOI
+	TRAP	110
+.ENDM
+
+;; ASCII -> RADIX-50 in R1
+;; R2: char-reading callback
+;; R3: Pointer to ASCII
+;; RETURNS: R1: RADIX-50 string, R3: address of next position
+;;  CF=1 if some chars were processed
+.MACRO	.A2R50
+	TRAP	134
+.ENDM
+
+
+
+;; Skip whitespace
+.MACRO	.SKWS
+	TRAP	112
+.ENDM
+
+;; Skip whitespace;
+;; if the next char is not ';' or NL then Bump
+.MACRO	.CKCOM
+	TRAP	123
+.ENDM
+
+;; Skip whitespace;
+;; If the next char is ';' or NL then .ERR A
+;!!!R .MACRO	.NCHAR
+;!!!R 	TRAP	100
+;!!!R .ENDM
+
+;; Skip whitespaces, read next char and check it is `ch`
+;; Corrupts R2
+.MACRO	.EAT	ch
+	.WORD	7000 + ch         ; using Invalid Instruction vector
+.ENDM
+
+;; Skip whitespaces, read next char and set ZF=1 if it is `ch`
+;; Corrupts R2
+.MACRO	.EATP	ch
+	.WORD	7400 + ch         ; using Invalid Instruction vector
+.ENDM
+
+;; Don't skip whitespaces, read next char and set ZF=1 if it is `ch`
+;; Corrupts R2
+.MACRO	.SKIPP	ch
+	.WORD	107400 + ch         ; using Invalid Instruction vector
+.ENDM
+
+;; Find word SYNAM0 in table, following this macro
+;; OUTPUT: R1: number of symbol, CF=1
+;; CF=0, if the Symbol not found
+.MACRO	.FWOR
+	TRAP	114
+.ENDM
+
+;; Find 2-word entry in table, following this macro
+;; OUTPUT: R1: number of symbol, CF=1
+;; or branch by offset in Last Word, if the Symbol not found
+.MACRO	.FDWOR
+	TRAP	115
+.ENDM
+
+
+.MACRO	.R50	s, a
+	.RAD50	s
+	.WORD	a
+.ENDM
+
+;; Read symbol
+;; OUTPUT:
+;;   CF=1, Symbol found
+;;   CF=0, No symbol
+.MACRO	.SYMP
+	TRAP	106
+.ENDM
+
+;; Read Local Label
+;; OUTPUT:
+;;   CF=1, Label at R1 (and in SYNAM0, SYNAM1)
+;;   CF=0, No symbol
+.MACRO	.LCLP
+	TRAP	100
+.ENDM
+
+;; Same as .SYMP, but throws Error A if there is no Symbol
+.MACRO	.SYMB
+	TRAP	125
+.ENDM
+
+;; Read register number into R1
+.MACRO	.REG
+	TRAP	130
+.ENDM
+
+
+
+
+;; R1 <<= 6
+.MACRO	.ASL6
+	TRAP	121
+.ENDM
+
+;.MACRO	.PRINT	msg
+;	TRAP	116
+;	.ASCIZ	msg
+;	.EVEN
+;.ENDM
+
+
+.MACRO	.ASK	msg
+	TRAP	117
+	.ASCIZ	msg
+	.EVEN
+.ENDM
+
+; File API
+.MACRO	.FILE	cmd, addr, len
+	TRAP	122
+	.WORD	cmd, addr
+	.IF NB len
+		.WORD	len
+	.ENDC
+.ENDM
+
+;; Eval Register of Integer expression
+;; OUTPUT: R1: value, CF=1 if result is Register
+.MACRO	.REXPR
+	TRAP	120
+.ENDM
+
+;; Eval int expression
+.MACRO	.EXPR
+	TRAP	124
+.ENDM
+
+
+;; Searches byte value in R1 in array
+.MACRO	.SWITCH
+	TRAP	144
+.ENDM	.SWITCH
+
+.MACRO	.CASE	key, lab
+	.SBYTE	lab-.-2/2
+	.BYTE	key
+.ENDM	.CASE
+
+
+
+;; Eval value before binary operation of <expr>
+.MACRO	.TERM
+	TRAP	145
+.ENDM
+
+;; Calculates - offset in words
+;; OUTPUT: R1: (ParsedLabel-R5)/2
+.MACRO	.OFFW
+	TRAP	146
+.ENDM
+
+;; Check nesting and CNDMOD
+;; Go to SKREST if no processing required
+.MACRO	.KNEST
+	TRAP	147
+.ENDM
+
+;; Unnest block
+.MACRO	.UNEST	;;!!!r?
+	TRAP	151
+.ENDM
+
+;; Expand following Macro or Loop body lines until .ENDR or .ENDM and then translate them
+;; INPUT: R3: position on line before the Body
+.MACRO	.BODY
+	TRAP	150
+.ENDM
+
+LCLSYM	= 177777	; Local Symbol first Name Word
+
+
+
+;; Stack overflow
+.MACRO	.E.SO
+	TRAP	1
+.ENDM
+
+.MACRO	.CKSTK
+	CMP	SP, #ASTKLO	; out-of-TRAP check to speedup EVAL
+	BLO	ERR.O
+.ENDM
+
+
+
+.ASECT
+
+
+.	= 756
+
+	.WORD	RETADR			; start address
+	.WORD	IMGEND - RETADR		; module length
+RETADR:	BR	START							; in case if autorun does not work (loaded on BK-0011)
+	.WORD	1000, 1000, 1000, 1000, 1000, 1000			; return addresses for auto-run, don't use label becase this code is relocatable
+. = 1000
+
+START:	JMP	INIT
+
+;.	= 24756
+.	= 10000
+	.WORD	762			; start address
+	.WORD	IMGEND - RETAD2		; module length
+RETAD2:	BR	START2							; in case if autorun does not work (loaded on BK-0011)
+	.WORD	1000, 1000, 1000, 1000, 1000, 1000			; return addresses for auto-run, don't use label becase this code is relocatable
+START2:	MOV	PC, R1
+2$:     ADD	#IMGEND-2$, R1
+	MOV	#IMGEND-INIT, R3
+1$:	MOVB	-(R1), INIT-1(R3)
+	SOB	R3, 1$
+	MOV	#UTEXT-ITEXT+3, R3
+3$:	MOVB	ITEXT-2(R3), CODE-<UTEXT-ITEXT+3>-1(R3)
+	SOB	R3, 3$
+	JMP	@#INIT
+;. = 25000
+.INCLUDE /init.mac/
+
+;. = 27000
+
+; R4.OFF	= 0	; to avoid explicit 0
+R3.OFF	= 2
+R2.OFF	= 4
+R0.OFF	= 6
+PC.OFF	= 10
+R5.OFF	= 12
+ST.OFF	= 14	; First Word Before Stack Frame ;   Number Of Saved Bytes In Stack Frame
+
+.IIF NE C$BK10	.IIF GT .-27000 .ERROR	; The Source Code exceeds the bounds of the code memory
+. = 27000
+CODE:
+;; TRAP instruction handler.
+;; Saves all registers except R1
+I.TRAP:	PUSH	R0, R2, R3, R4
+	PUSH	R5.OFF(SP)		; PSW
+	MOV	R5, R5.OFF+2(SP)
+	MOV	PC.OFF+2(SP), R4	; Get PC after CALL instruction.
+	PUSH	-2(R4)			; Decode TRAP instruction
+	CMP	(SP), #OP.TRAP + 100
+	BLO	ERR
+	ASL	(SP)
+	ADD	#TRAPS-<OP.TRAP + 100 * 2>, (SP)
+	MOV	@(SP)+, -(SP)
+	CLR	R0
+	RTI
+
+
+
+ERR:	MOVB	(SP), ERRNO
+	; HALT
+I.STOP:	EMT	14		; Init Monitor
+RESET3:	MOV	#ASTKUP-2, SP	; (SP) is for CURSOR
+	MOV	SP, R1
+	MOV	R1, R2
+	EMT	24		; Hide cursor
+;	INCB	$F.HID		; Hide cursor
+;	.TTYOUT	#C.FF		; Clear screen
+RESET1:
+
+
+;!!!?	PUSH	R3, 104
+
+.INCLUDE /editor.mac/
+
+;; Get current char, including ;
+.MACRO	.GCHR
+	TRAP	135
+.ENDM
+
+;; Get next non-space char or ZF=1 if NL or comment
+.MACRO	.RCHR
+	TRAP	136
+.ENDM
+
+;; Classify char in (R3) as Digit or Letter
+;; OUTPUT:
+;;   CF=1 if char in (R3) is Digit or letter
+;;   R1: char in (R3) in uppercase if CF==1
+.MACRO	.ALNUM
+	TRAP	140
+.ENDM
+
+;; Parse Double float
+;; OUTPUT: R1: address of its 8-byte Double represenation
+.MACRO	.FLOAT
+	TRAP	137
+.ENDM
+
+;; Process array of values in .BYTE, .WORD, .FLT2, .FLT4
+.MACRO	.ARRAY
+	TRAP	141
+.ENDM
+
+;; Checks that R5 is even
+.MACRO	.ALIGN
+	TRAP	142
+.ENDM
+
+;; Find Symbol with name SYNAM0..SYNAM1 in `table`
+;; OUTPUT: CF=1 if found & R1: points to value
+.MACRO	.FIND	table
+	TRAP	143
+	.WORD	table - 4
+.ENDM
+
+;; Find Symbol with name SYNAM0..SYNAM1 in `table` with 2 values
+;; OUTPUT: CF=1 if found & R1: points to value
+.MACRO	.FIND2	table
+	TRAP	111
+	.WORD	table - 6
+.ENDM
+
+;; Finds or allocates place for for Symbol with Name SYNAM0..SYNAM1
+;; OUTPUT: R1: address of value
+.MACRO	.ASSIG	table
+	TRAP	131
+	.WORD	table - 6
+.ENDM
+
+
+
+
+;; Compile the asm code
+;; OUTPUT: R2: #B.BIN+2
+ASSEMB:
+	MOV	#URAM-TSYM, R5
+2$:	CLRB	TSYM-1(R5)     	; Clear temporary area
+	SOB	R5, 2$
+
+	CALL	(PC)		; 1st pass
+PASS:
+	MOV	#12, R4
+	MFPS	(R4)
+	MOV	#I.EAT, -(R4)	; R4: 8. Triple purpose: Address, RADIX and gap between UBIN & TEXT
+
+	MOV	TEXT, R3
+	MOV	R3, R5
+	SUB	R4, R5		; R5 = TEXT - 10
+	MOV	R5, UBIN	; UBIN = TEXT - 10
+	SUB	#STATE+1-10, R5	; count prepended \n
+1$:	CLRB	STATE-1(R5)   	; Clear Pass state area & dest buffer
+	SOB	R5, 1$
+
+	MOV	#LCLRGN, R1
+	MOV	R1, R5
+	MOV	#TLCL, (R5)+	; LCLRGN = #TLCL
+	MOV	(R1), (R5)+	; MACLCL = 30000
+	MOV	#EXPBUF, (R5)+	; MOV #EXPBUF, EXPCUR
+	MOV	R4, (R5)+	; RADIX = 8., R5: #TSYM
+;; Init Register Symbols
+3$:	MOV	-(R1), (R5)+
+	CLR	(R5)+
+	MOV	R4, (R5)
+	DEC	(R5)+		; (R5): Register number
+	MOV	PC, (R5)+	; Register Symbol sign
+	SOB	R4, 3$
+	MOV	#^R., (R5)	; S.DOT
+
+	MOV	#A.STA, R5
+	MOV	R5, B.BIN
+;; Parse block of Text
+PARSE:	CALL	NXLINE 		; Loop until end of text
+	BR	PARSE
+
+ASSIGN:	.ASSIG	TSYM
+	MOV	R5, (R1)
+	RETURN
+
+LABEL:	TST	NESTLV
+	BNE	PARES1
+	TST	CNDMOD
+	BNE	PARES1
+	TSTB	(R4)		; TSTB MEXPLV
+	BEQ	2$
+	.EATP	':       	; Allow `LABEL::` syntax
+	BR	PARES1
+
+2$:	MOV	#SYNAM0, R2
+	CMP	(R2)+, #LCLSYM
+	BEQ	LCL		; Add local label
+	.EATP	':       	; Allow `LABEL::` syntax
+
+;; Begin a new Local Label Region
+1$:	SUB	#4, LCLRGN
+	TST	@LCLRGN
+	BNE	1$
+
+;; Add Symbol
+;; R5: value
+	.FIND2	TSYM
+	BCC	ASSIGN
+	CMP	(R1), R5
+BEQPAR:	BEQ	PARES1
+	.ERR	M
+
+
+
+;; .MACRO symbol  args...
+MACRO:	INCB	(R0)		; INCB MACLV
+	.SYMB
+	.ASSIG	TMAC
+	MOV	R3, (R1)
+	MOV	R1, CURMAC
+	BR	SKRES0
+
+
+LCL:	MOV	LCLRGN, R1
+1$:	MOV	-(R1), R4	; R4: value
+	MOV	-(R1), R0	; R0: number
+	BEQ	3$
+	CMP	R0, (R2)	; CMP R0, SYNAM1
+	BNE	1$
+	CMP	R4, R5
+	BR	BEQPAR
+3$:	MOV	(R2), (R1)+	; MOV SYNAM1, (R1)+
+	MOV	R5, (R1)
+PARES1:
+;; Parse line inside TEXT or EXPBUF and rest of line after label
+PAREST:	;.EATP	<',>
+	;BEQ	NXLINE
+	MOV	R5, AINSTR
+	MOV	R3, SAVCUR		; R2: Saved cursor
+	MOV	#MEXPLV, R4
+	.SYMP
+	BCS	SYMBOL
+	.LCLP
+	BCS     SYMBO1
+	TST	NESTLV
+	BNE	SKRES0
+	TST	CNDMOD
+	BNE	SKRES0
+	.CKCOM
+RET.6:	RETURN
+	JMP	FALLWO		;!!!O
+
+
+
+REPT:	.EXPR
+	CLR	-(SP)
+	MOV	R1, R0
+1$:	BLE	ENDREP
+	.BODY
+	DEC	R0
+	BR	1$
+
+IRP:	.SYMB
+	.EATP	<',>
+	.EAT	'<
+2$:	CLR	-(SP)
+	.EATP	'>
+	BEQ	ENDREP
+	MOV	#'>, R2
+	MOV	R3, R4
+	CALL	BIND
+	MOV	R4, R3
+	.BODY
+	POP	SYNAM0, SYNAM1	; Restore Symbol to be used in the next Binding
+	ADD	(SP)+, SP	; Unwind
+	BIC	#1, SP		;!!!?
+	TST	(SP)+ 		; Unwind vars
+	.EATP	<',>
+	BR	2$
+
+SYMBOL:	.EATP	'=
+	BEQ	LET
+SYMBO1:	.EATP	':
+	BEQ	LABEL
+	MOV	#CNDMOD, R2
+	TST	(R2)		; TST CNDMOD
+	BNE	IFSYM		; False mode
+	MOV	#MACLV, R0
+	.FDWOR
+;; Preprocessor Directives
+PRESYM:	.RAD50	".ENDM "".ENDR "
+	.RAD50	".MACRO"".IRP  "".IRPC "".REPT "
+	.WORD	REST-.-2
+	DEC	R1
+	BLE	ENDM		; .ENDM or .ENDR
+	TSTB	(R0)		; TSTB MACLV
+	BEQ	PRESY0
+	INCB	(R0)		; INCB MACLV
+SKRES0:	BR	SKRES2
+PRESY0:	TSTB	(R4)		; TSTB MEXPLV
+	BEQ	2$
+	INCB	(R4)		; INCB MEXPLV
+	BR	SKRES2
+2$:	MOVB	PREHAN-1(R1), (PC)
+	BR	.
+PREBR:
+
+
+
+;; Complete Repeat directives
+;; R4: Return address
+ENDREP:	INCB	MACLV		; To ignore body until .ENDR
+ENDEX1:	MOV	#SKREST, R1
+ENDEXP:	MOV	AINSTR, R5
+1$:	TST	(SP)+
+	BEQ	8$
+	TST	(SP)+
+	ADD	(SP)+, SP
+	BIC	#1, SP		;!!!?
+	BR	1$
+8$:	JMP	(R1)
+
+
+PARES0:	BR	PAREST
+
+;; .IRPC sym, <string>
+IRPC:	.SYMB
+	.EATP	<',>
+	CLR	-(SP)
+	TST	-(SP)
+	PUSH	#2, SYNAM1, SYNAM0
+	.EATP	'<
+	BEQ	3$
+2$:	CMPB	(R3), #C.SP
+	BLOS	ENDREP
+	.SKIPP	';
+	BEQ	ENDREP
+	MOVB	(R3)+, 7(SP)
+	.BODY
+	BR	2$
+3$:	.SKIPP	'>
+	BEQ	ENDREP
+	MOVB	(R3)+, 7(SP)
+	.BODY
+	BR	3$
+
+
+LET:	.KNEST
+	TSTB	(R4)		; TSTB MEXPLV
+	BNE	SKRES2
+	.ASSIG	TSYM
+	MOV	R1, R2
+	.EXPR
+	MOV	R1, (R2)
+	MOV	AINSTR, R5	; Process `. = <expr>` case
+	BR	CKRES0
+
+
+;PRE1SY:	.FDWOR
+;	.RAD50	".ENDM "".ENDR "
+;	.WORD	REST-.-2
+;; .ENDR [name]
+ENDR:
+;; .ENDM [name]
+ENDM:   TSTB	(R0)		; TSTB MACLV
+	BEQ	ENDM3
+	DECB	(R0)		; DECB MACLV
+	BEQ	RET.7
+	MOV	CURMAC, R2
+	CLR	CURMAC
+	.SYMP
+	BCC	CKRES0
+	.FIND2	TMAC
+	CMP	R1, R2		; compare with previous CURMAC
+	BEQ	CKRES0
+ERR.A0:	.ERR	A
+ENDM3:	DECB	(R4)		; DECB MEXPLV
+	BMI	ERR.O
+	BNE	SKRES2
+;	MOV	(R3), SP	; MOV MARGS, SP
+;	MOV	#1$, R1
+;	BR	ENDEXP
+;1$:	;POP	(R3)		; POP MARGS
+2$:	TSTB	-(R3)
+	BNE	2$
+	INC	R3		; R3: beginning of the expanded chunk
+	MOV	SAVCUR, R2	; R2: Cursor before .ENDM/.ENDR
+	CLRB	(R2)+
+	MOV	R2, EXPCUR	; End of expansion
+	CMP	(SP)+, (SP)+	; SP += 4. Unwind to pre-Expand state
+	RETURN			; Parse expanded chunk
+
+
+REST:	TSTB	(R0)		; TSTB MACLV
+	BNE	BNESK		; BNE SKREST
+	TSTB	(R4)		; TSTB MEXPLV
+	BNE	BNESK		; BNE SKREST
+IFSYM:	MOV	#FLSLV, R0
+	MOV	#CNDMSK, R4
+	.FDWORD
+	.RAD50	".IF   "".ENDC "
+	.WORD	IFFT-.-2
+
+	ASL	R1
+	ADD	R1, PC
+	BR	IF
+;; .ENDC
+	TSTB	(R0)		; TSTB FLSLV
+	BNE	1$		; Active level
+	ASL	(R4)		; ASL CNDMSK
+	BR	IFT.1
+1$:	INCB	(R0)		; INCB FLSLV
+CKRES0:	BR	CKRES3
+
+SKRES2:	BR	SKREST		;!!!O
+
+
+IFFT:	TSTB	(R0)		; TSTB FLSLV
+BNESK:	BNE	SKREST
+	.FDWOR
+S.IFT:	.RAD50	".IFF  "".IFT  "".IFTF "
+        .WORD	CKMOD-.-2
+	ASL	R1
+	ADD	R1, PC
+	BR	IFF.
+	BR	IFT.
+IFTF.:	CLR	(R2)		; CLR CNDMOD
+	BR	CKRES3
+
+IFF.:	TST	(R4)		; TST CNDMSK
+	BMI	IFTF.
+	MOV	PC, (R2)	; CNDMOD = False
+	BR	CKRES3
+
+
+
+;; Parse line inside TEXT
+NXLINE:	TSTB	(R3)
+	BEQ	EOT
+.IF NE C$BK10
+	CMP	R3, PC
+.IFF
+	CMP	R3, ETEXT
+.ENDC
+	BHIS	1$
+	MOV	R3, CURSOR
+
+1$:	TSTB	MEXPLV
+	BEQ	PARES0
+	MOV	EXPCUR, R4
+	.SUBR	EXPAND
+	MOV	R4, R3
+	PUSH	R1			; Save Cursor position after original line
+	CALL	PAREST
+	POP	R3			; Restore Cursor
+RET.7:	RETURN
+
+
+IF:	TST	(R2)		; TST CNDMOD
+	BEQ	IF1		; Nesting Level 1
+	DECB	(R0)		; DECB FLSLV
+	BMI	SKREST
+ERR.O:	.ERR	O
+IF1:	CALL	EVLCND
+	ROR	(R4)		; ROR CNDMSK
+IFT.:   TST	(R4)		; TST CNDMSK
+IFT.1:	SXT	CNDMOD		; R2 is corrupted by .EATP
+CKRES3:	BR	CKRES2
+
+
+
+CKMOD:	TST	(R2)		; TST CNDMOD
+	BNE	SKREST		; Skip rest of line if the Condition is False
+;; Parse General Directive or Instruction
+;; OUTPUT: R0: Opcode
+	CMP	R5, UBIN
+	BLO	1$
+	.ERR	F		; Out of Memory
+1$:	.FIND2	TMAC
+	BCC	NOTMAC		; Not a Macro name
+
+;; Expand Macro
+EXPMAC:	;PUSH	R3
+	MOV	R3, R4		; R4: args
+	MOV	(R1), R3	; R3: Macro text
+	CLR	-(SP)		; End of arg list
+	BR	7$
+5$:	.SYMB
+        MOV	MACLCL, R5
+        INC	MACLCL
+        PUSH	R3
+        MOV	#TMPFLT, R3
+	CALL	$UTOA	  	; on return R1, $BUFOUT: ASCII, R2: length
+	POP	R3
+	MOV	R1, R4
+	SUB	R2, R4		; Beginning of local label text
+	MOV	#'$, (R1)+
+	CLRB	(R1)+		; Cannot be args after macro local label
+;; Push string arg from R4
+6$:	CLR	R2
+	CALL	BIND
+	.EATP	<',>
+	BNE	8$
+7$:	.EATP	'?
+	BEQ	5$		; macro local label
+	.SYMP
+	BCS	6$
+8$:	;CALL	CKREST
+	.BODY
+EXPMA8:	CLRB	MACLV
+	MOV	R4, R3
+	JMP	ENDEX1
+
+IIF:	CALL	EVLCND
+	BEQ	SKREST
+	JMP	PAREST		;!!!O
+;; Skip rest of line
+SKREST:	CMPB	(R3)+, #C.NL
+	BNE	SKREST
+RET:	RETURN
+
+RAD50:	.ALIGN
+	MOV	#R50CB, R2
+1$:	.A2R50
+	BCC	RET
+	MOV	R1, (R5)+
+	.CKCOM
+	RETURN
+	BR	1$
+
+EVEN:	INC	R5
+	BIC	#1, R5
+	BR	CKREST
+ODD:	BIS	#1, R5
+CKRES2:	BR	CKREST
+
+;; .ENABL / .DSABL
+;; R1: 0 or 1
+ENABL:	MOV	R1, R2
+	.ARRAY
+	.SYMB
+	CMP	SYNAM0, #^RAMA
+	BNE	ENABL
+	MOVB	R2, AMA
+	BR	ENABL
+
+
+REM:	.GCHR
+1$:	TSTB	(R3)
+	BNE	2$
+	.ERR	E
+2$:	CMPB	(R3)+, R1
+	BNE	1$
+	BR	CKREST
+
+
+;; R1: 4 or 8.
+FLT:	MOV	R1, R0
+	.ALIGN
+1$:	.ARRAY
+	.FLOAT
+	MOV	R0, R4
+2$:	MOVB	(R1)+, (R5)+
+	SOB	R4, 2$
+	BR	1$
+
+;; End of current expansion chunk
+EOT:	CMP	R3, PC
+	BLO	END1		; End of Text
+1$:	TSTB	-(R3)
+	BNE	1$
+	INC	R3
+	MOV	R3, EXPCUR	; Return to prev expansion state
+	MOV	R5, AINSTR
+;	CLRB	MACLV		; May be set after .MEXIT
+	BR	END2
+
+
+;; .END
+END:	.CKCOM
+END1A:	BR	END1		; No Entry point
+	.EXPR
+	MOV	R1, B.BIN
+END1:   MOV	#B.BIN, R2
+	SUB	(R2)+, R5	; SUB B.BIN, R5
+	MOV	R5, (R2)	; MOV R5, LENBIN
+	INCB	PASSN		; Next Pass
+END2:	TST	(SP)+		; Return from PARSE
+	RETURN
+
+MEXIT:	INCB	MACLV
+;; Checks the rest of line is empty
+CKREST:	.CKCOM
+	RETURN
+	.ERR	Q
+
+NOTMAC:	CLR	R0
+	.FDWOR
+	.RAD50	".DSABL"			; Must be on position 0 (used in ENABL subroutine)
+	.RAD50	".ENABL"			; Must be on position 1 (used in ENABL subroutine)
+	.RAD50	".ASCII"".ASCIZ"
+	.RAD50	".FLT2 "			; Must be on position 4 (used in FLT subroutine)
+	.RAD50	".END  "".BYTE "".BLKB "
+	.RAD50	".FLT4 "			; Must be on position 8. (used in FLT subroutine)
+	.RAD50	".IIF  "
+	.RAD50	".RADIX"			; Must be on position 10. (used in RADIX. subroutine)
+	.RAD50	".MEXIT"".NCHR "".NTYPE"".ERROR"".EVEN "
+	;.RAD50	".NARG"<NARG>"
+	.RAD50	".ODD  "".REM  "
+	.RAD50	".BLKW "".RAD50"".WORD "	; Directives requiring WORD-Alignment
+	.WORD	INSTR-.-2
+	MOVB	DIRHAN(R1), (PC)
+	BR	DIRBR
+DIRBR:
+
+;; .RADIX dec
+;; R1: 10.
+RADIX.:	MOV	R1, RADIX
+	.TERM
+	MOV	R1, RADIX
+	BR	CKRES2
+
+
+BLKW:	.ALIGN
+	.EXPR
+	ASL	R1
+	BR	BLK
+BLKB:	.EXPR
+BLK:	ADD	R1, R5
+CKRES4:	BR	CKRES2
+
+
+BYTE:   INC	R0
+1$:	.ARRAY
+	CALL	EXBYTE
+	MOVB	R1, (R5)+
+	BR	1$
+
+;; .NTYPE symbol, arg
+NTYPE:	PUSH	R5
+	.SYMB
+	.ASSIG	TSYM
+        PUSH	R1
+        .EAT	<',>
+	CLR	R5	; Temp dest buffer
+	CALL	NTYP
+	BIC	#177700, R0
+	MOV	R0, @(SP)+	; Assign to symbol
+	BR	NASSI8
+
+
+;; .NCHR symbol, string
+NCHR:	PUSH	R5
+	.SYMB
+	PUSH	R1
+	PUSH	R3
+	.EATP	'<
+2$:	BEQ	3$
+	MOVB	(R3), R1
+	.SWITCH
+	.WORD	2
+	.CASE	C.NL, 4$
+	.CASE	C.HT, 4$
+	;.SBYTE	C.SEMI, <BINMUL-1$/2> !!!?
+	BR	2$
+4$:	MOV	R3, R5
+	DEC	R5
+	BR	5$
+3$:	CMPB	(R3)+, #'>
+	BNE	3$
+	MOV	R3, R5
+	TST	-(R5)		; R5-= 2
+5$:	SUB	(SP)+, R5
+NASSIG:	POP	R1		; R1: Symbol
+	.ASSIG	TSYM
+	MOV	R5, (R1)
+NASSI8:	POP	R5      	; restore R5
+CKRES5:	BR	CKRES4
+
+
+
+; ;; .MDELETE name1, name2, ...
+;MDELE:	.SYMB
+;	.FIND2	TMAC
+	;BCS	1$
+;	.ERR	U
+;1$:	CLR	(R1)
+;	.COMMA	MDELE
+
+
+;; .ERROR something
+ERROR:	.ERR	P
+
+
+
+
+
+ASCIZ:	CALL	ASCII
+	CLRB	(R5)+
+	RETURN
+
+
+
+;; .ASCII handler
+ASCII:	.GCHR         		; ';' is valid limiter for first iteration
+	BR	6$
+4$:	DEC	R3
+	.TERM
+	MOVB	R1, (R5)+
+5$:	.EATP	'<
+	BEQ	4$
+	.RCHR
+	BEQ	CKRES5
+6$:	MOV	R1, R4		; Delimiter
+2$:	.SKIPP	C.NL
+	BEQ	ERR.A1
+	MOVB	(R3)+, R1
+	CMPB	R1, R4
+	BEQ	5$
+	MOVB	R1, (R5)+
+	BR	2$
+
+
+
+
+
+
+;; Treat unrecognized FOO as .WORD FOO
+FALLWO:	MOV	SAVCUR, R3	; R3: Cursor before Symbol
+WORD:	MOV	#2, R0		; R0 = 2
+	.ALIGN
+1$:	.ARRAY
+	.EXPR
+	MOV	R1, (R5)+
+	BR	1$
+
+
+
+;; Lookup Instruction
+INSTR:	.ALIGN
+	TST	(R5)+
+	.FDWOR
+OPSYM0:	.RAD50 	"HALT  ""WAIT  ""RESET ""RETURN""TRAP  ""MARK  ""BLOS  ""BHIS  "
+	.RAD50	"CALL  ""SWAB  ""MFPS  ""MTPS  "
+OPSY0E:
+	.WORD	OPPRC1-.-2
+	BR	INSTR1
+
+
+
+INSTR5:	BISB	OPCOD1(R1), R0
+	CMP	R1, #OPSYMB-OPSYM1/2
+	BLO	BIS0			; OPSYM1
+H.BRB:	SWAB	R0
+	CLR	@AINSTR
+	.OFFW
+	BISB	R1, R0
+	SXT	R4		; Check bounds:  -128. <= x <= 127
+	TSTB	PASSN
+	BEQ	BIS0
+	SWAB	R1
+	CMPB	R4, R1
+	BEQ	BIS0
+ERR.A1:	.ERR	A
+
+H.MARK:	.EXPR
+H.SOB1:	CMP	R1, #100
+	BLO	BISBR4
+	.ERR	T
+
+
+H.REG:	.REG
+BISBR4:	BISB	R1, R0
+H.R:
+BIS0:	BIS	R0, @AINSTR
+	BR	CKRES5
+
+
+
+
+;; Process 3-char instructions
+OPPRC1:	TST	SYNAM1
+	BNE	CKBYTE
+	.FWOR		; 3-char instruction
+OPSYM1:	.RAD50	"RTI""BPT""IOT""RTT""NOP""CLC""CLV""CLZ""CLN""CCC""SEC""SEV""SEZ""SEN""SCC"
+OPSYMB:	.RAD50	"BCC""BCS""BLO""BR ""BNE""BEQ""BGE""BLT""BGT""BLE""BPL""BMI""BHI""BVC""BVS"
+OPSYMV:	.RAD50	"EMT""RTS""SOB""JSR""XOR""ADD""SUB""JMP""SXT"
+	.WORD	0
+	BCC	OPPRC3
+	CMP	R1, #OPSYMV-OPSYM1/2
+	BLO	INSTR5
+	SUB	#OPSYMV-OPSYM1/2-<OPSY0E-OPSYM0/4>, R1
+INSTR1:	MOVB	OPHAN0(R1), 1$
+	ASL	R1
+	MOV	OPCOD0(R1), R0
+1$:	BR	.
+OPBR0:
+
+
+
+CKBYTE:	CMP	SYNAM1, #^RB		; Check for 'B' suffix of Byte-instructions
+BNEFWO:	BNE	FALLWO
+BYINST:	MOV	#100000, -2(R5)	;  Byte-instruction
+OPPRC3:	TST	-(R5)		; Save Byte-instruction bit
+	.FWOR
+OPSYM3:	.RAD50	"MOV""CMP""BIT""BIC""BIS"
+OPSYM4:	.RAD50	"CLR""COM""INC""DEC""NEG""ADC""SBC""TST""ROR""ROL""ASR""ASL"
+	.WORD	0
+	BCC	BNEFWO		; BNE FALLWO  (ZF=0 here)
+	TST	(R5)+
+	CMP	R1, #<OPSYM4-OPSYM3/2>
+	BLO	2$
+	ADD	#50-<OPSYM4-OPSYM3/2>, R1	; R1: opcode 51..63
+	BR	H.DDA
+2$:	INC	R1    		; R1: opcode of MOV, CMP, BIT, BIS, BIC
+H.SSDD:	CALL	SS
+	MOV	R0, R1
+	CLR	R0
+	BR	ASLDD
+
+H.SOB:	.REG
+	.ASL6
+	BIS	R1, R0
+	.EAT	<',>
+	.OFFW
+	NEG	R1
+	BR	H.SOB1
+
+
+H.EMT:	PUSH	#BISBR4
+;; Parse Byte value
+EXBYTE:	.EXPR
+	TSTB	PASSN
+	BEQ	9$		; Don't check on first Pass
+	CMP	R1, #255.	; Check bounds
+2$:	BGT	ERR.A1
+	CMP	#-256., R1
+	BGT	2$		; .ERR A
+9$:	RETURN
+
+
+H.RDD:	.REG
+ASLDD:	.EAT	<',>
+H.DDA:	.ASL6
+	BIS	R1, R0
+H.DDB:	CALL	NTYP
+	BR	BIS0
+
+
+HSSDDB:	MOV	R0, R1
+	CLR	R0
+	BR	H.SSDD
+
+CLSEL.:	CLR	SEL
+	CLR	ESEL
+	BR	E.RTI
+
+SEL.:	MOV	#SEL, R4
+	TST	(R4)
+	BNE	9$
+	MOV	R3, (R4)+
+	MOV	R3, (R4)+
+9$:	BR	E.RTI
+
+
+
+FILE.:	.CURBO
+	CMP	(R4), #3
+	BEQ	2$		; Read command
+	MOV	#A.FILE, R1
+	MOV	(R4)+, (R1)+	; cmd
+	MOV	(R4)+, (R1)+	; address
+	MOV	(R4)+, (R1)+	; length
+	CALL	$ASKEX
+9$:	BR	E.4TRP
+
+2$:	MOV	2(R4), R5
+	CMP	(R4)+, (R4)+	; R4 += 4
+	CALL	$ASKRD			; Ask filename and read from Tape
+	TSTB	A.FILE + 1		; Check error
+	BEQ	E.4TRP
+	HALT
+
+KNEST.:	TST	NESTLV
+	BNE	1$
+	TST	CNDMOD
+	BEQ	E.RTI
+1$:	MOV	#SKREST, PC.OFF(SP)
+	BR	E.RTI
+
+
+;!!!R UNEST.:	TSTB	MACLV
+;!!!R 	BEQ	E.RTI
+;!!!R 	DECB	MACLV
+;!!!R	UNEST1:	MOV	#SKREST, PC.OFF(SP)	; address of RETURN
+;!!!R	BR	E.RTI
+
+BODY.:	CALL	SKREST		; Make R3 point on Macro/Loop body
+	INCB	MEXPLV
+	MOV	#MARGS, R4
+	MOV	SP, (R4)
+	ADD	#ST.OFF, (R4)
+	.SUBR	PARSE
+	MOV	AINSTR, R5.OFF(SP)
+	CMP	PC.OFF(SP), #EXPMA8
+	BEQ	8$
+	TSTB	MACLV
+	BEQ	8$
+	MOV	#ENDEX1, PC.OFF(SP)
+8$:	BR	E.RTI
+
+;; .SWITCH
+SWITC.:	MOV	(R4)+, R0		; Loop count
+1$:	MOVB	(R4)+, R5
+	CMPB	(R4)+, R1
+	BEQ	E.SWIT
+	SOB	R0, 1$
+	BR	E.4TRP
+
+E.SWIT:	ASL	R5
+	ADD	R5, R4
+				; Fallback
+E.4TRP:	MOV	R4, PC.OFF(SP)
+E.RTI:	MFPS	R3
+	MOV	R5.OFF(SP), R5
+	MOV	R3, R5.OFF(SP)
+	POP	R4, R3
+.IF NE C$BK10
+	JMP	$RTI20        		; POP R2, R0; RTI
+.IFF
+	POP	R2, R0
+	RTI
+.ENDC
+
+
+
+;; Classify char in (R3)
+;; OTHER handler
+;; . or $
+;; LETTER handler
+;; DIGIT handler
+CHCLS.:	TST	(R4)+		; R4 += 2
+	MOVB	(R3), R1
+	CMPB	#'0-1, R1
+	BHIS	2$
+	TST	(R4)+		; R4 += 2
+	CMPB	R1, #'9 + 1
+	BLO	BUMP		; Digit. R4+=2; BR E.4TRP
+	BIC	#40, R1		; To Uppercase
+	CMPB	#'A-1, R1
+	BHIS	CLC.
+	CMPB	R1, #'Z + 1
+	BHIS	CLC.
+	BR	E.4TRP
+2$:	CMPB	R1, #'.
+	BEQ	E.4TRP
+	CMPB	R1, #'$
+	BEQ	E.4TRP
+CLC.:	CLC
+	BR	E.RTI
+
+CHCLB.:	BISB	(R3), R0
+	MOV	R0, (SP)	; Return char in R4
+	TST	(R4)+
+	.CHCLS
+	BR	E.RTI
+	BR	E.RTI
+	BR	E.4TRP
+BUMP:	TST	(R4)+		; R4 += 2
+E.4TRA:	BR	E.4TRP
+
+
+POCOL.:	CLR	R4
+1$:	CMP	R4, R0.OFF(SP)
+	BHIS	E.RTI1
+	INC	R4
+	CMPB	(R1), #C.NL
+	BEQ	E.RTI1
+	BHI	2$
+	BIT	#7, R4		; Process \t (All char codes < \n are treated as \t)
+	BNE	1$
+2$:	INC	R1
+	BR	1$
+
+
+ALNUM.:	.CHCLS
+	BR	E.RTI		; CF=0
+	BR	E.RTI		; CF=0
+	BR	SEC.
+SEC.:	SEC
+E.RTI1:	BR	E.RTI
+
+
+
+ARRAY.:	CMP	R5, AINSTR
+	BEQ	1$		; First time
+	.RCHR
+	BEQ	7$
+	DEC	R3
+	.EAT	<',>
+1$:     MOV	R5, R4
+
+	ADD	R0.OFF(SP), R5
+;	MOV	R0.OFF(SP), R0
+;2$:	CLRB	(R5)+
+;	SOB	R0, 2$
+
+	.EATP	<',>
+	BEQ	1$
+	MOV	R3, R3.OFF(SP)
+	.RCHR
+	BNE	8$
+7$:	MOV	R5, R4
+	MOV	#SKREST, PC.OFF(SP)	; address of RETURN
+8$:	MOV	R4, AINSTR
+	MOV	R4, R5.OFF(SP)
+	BR	E.RTI1
+
+
+CKCOM.:	.RCHR
+	BNE	1$
+	CALL	SKREST		; Skip rest of line
+	BR	SR3SEE
+1$:	DEC	R3
+	MOV	R3, R3.OFF(SP)
+	BR	BUMP		; R4 += 2; BR E.4TRP
+
+SUBR.:	MOV	R0.OFF(SP), R0
+	PUSH	(R4)+
+	MOV	R4, PC.OFF+2(SP)
+	MOV	2(SP), R4	; R4.OFF
+	CALL	@(SP)+
+	BR	E.RTI1
+
+
+CACOL.:	CLR	R1
+1$:	MOV	#1, R2
+2$:	CMPB	-(R3), #C.NL
+	BEQ	E.RTI1
+	BHI	3$		; \t
+	MOV	#8., R2
+	ADD	R2, R1
+3$:	SOB	R2, 2$
+	INC	R1
+	BR	1$
+
+CURBO.:	CLRB	$F.HID		; Show cursor
+	CLR	R1
+	MOV	#21., R2
+	EMT	24
+	MOV	#231, R0	; Clear line
+	EMT	16
+E.RTI4:	BR	E.RTI1
+
+ASK.:	.CURBO
+;PRINT.:	PUSH	#E.4TRP
+PRI.R4:	MOV	R4, R1
+	CLR	R2
+1$:	BITB	(R4)+, (R4)+
+	BNE	1$
+	EMT	20		; Print message
+
+	MOV	#STRBUF, R1
+	MOV	#256.*C.NL + 20., R2
+	EMT	10
+	CLRB	-(R1)
+E.4TRB:	BR	E.4TRA
+
+ALIGN.:	ROR	R5
+	BCC	E.RTI4
+	.ERR	B
+
+;; Try to parse Local Label
+LCLP.:	MOV	R3, R5		; R5: points to first digit
+1$:	.CHCLB
+	BR	2$
+	BR	CLC.
+	INC	R3		; Digit
+	BR	1$
+2$:	CMP	R3, R5
+	BEQ	CLC.		; No digits
+	.SKIPP	'$
+	BNE	CLC.
+	MOV	R5, R3
+	.ATOI
+	TST	R1
+	BEQ	ERR.U		; 0$ label is prohibited
+	INC 	R3
+	MOV	#LCLSYM, SYNAM0
+	MOV	R1, SYNAM1
+SR3SEE:	BR	SR3SED		; SEC; BR SAV.R3
+
+
+FDWORA:	INC	R0
+FDWOR.:	MOV	(R4)+, R2
+	CMP	R2, SP
+	BLO	FDWOR2		; Last word
+	CMP	(R4)+, SYNAM1
+	BNE	FDWORA
+	CMP	R2, SYNAM0
+	BNE	FDWORA
+1$:	CMP	(R4)+, SP
+	BLO	FWORE
+	TST	(R4)+
+	BR	1$
+FDWOR2:	ADD	R2, R4
+	BR	E.4TRB
+
+FWORA:	INC	R0
+FWOR.:	MOV	(R4)+, R2
+	BEQ	FDWOR2		; to CLC; BR E.4TRB
+	CMP	R2, SYNAM0
+	BNE	FWORA
+2$:	TST	(R4)+
+	BNE	2$
+FWORE:	MOV	R0, R1
+SEC.4T:	SEC
+	BR	E.4TRB
+
+SKWS.:	.SKIPP	C.SP
+	BEQ	SKWS.
+	.SKIPP	C.HT
+	BEQ	SKWS.
+	BR	SAV.R3
+
+
+REG.:   .REXPR
+	BCS	SAV.R3
+	.ERR	R
+
+RCHR.:	.EATP	C.SEMI
+	BEQ	1$
+	CMPB	(R3), #C.NL
+	BNE	RSVR3
+1$:	MOV	R3, R3.OFF(SP)
+	SEZ
+	BR	E.RTI4
+
+;; INPUT:
+;;	R2: Char-reading Callback, returning RADIX-50 code in R1
+;;	R3: Pointer to ASCII
+;; RETURNS: R1: RADIX-50 string, R3: address of next position, CF=1 if some chars were processed
+A2R50.:	MOV	R2, R4		; R4: Callback
+	MOV	#3, R5
+	BR	2$
+1$:	MOV	R1, R0		; *= 40.
+	ASL	R0
+	ASL	R0
+	ADD	R1, R0
+	ASL	R0
+	ASL	R0
+	ASL	R0
+2$:	CALL	(R4)
+	ADD	R0, R1
+3$:	SOB	R5, 1$
+	CMP	R3.OFF(SP), R3	; CF:=1 if some chars were encoded
+SV.R3C:	BR	SAV.R3
+
+ASSIG.:	MOV	(R4)+, R1
+	MOV	SYNAM0, R3
+	MOV	SYNAM1, R5
+3$:	TST	(R1)+		; R1 += 2
+4$:	CMP	(R1)+, (R1)+	; R1 += 4
+	TST	(R1)
+	BEQ	7$
+1$:	CMP	(R1)+, R3
+	BNE	3$
+	CMP	(R1)+, R5
+	BNE	4$
+	BR	8$
+7$:	MOV	R3, (R1)+	; Create new entry
+	MOV	R5, (R1)+
+8$:	CLR	2(R1) 		; R1: Address of value
+E.4TRC:	BR	E.4TRB
+
+GCHR.:	.EATP	C.NL
+	BEQ	ERR.A2
+RSVR3:	MOVB	(R3)+, R1
+SAV.R3:	MOV	R3, R3.OFF(SP)
+E.RTI5:	BR	E.RTI4
+
+
+
+FIND2.:	TST	(R0)+		; R0 = 4
+FIND.:	TST	(R0)+		; R0 = 2
+	MOV	(R4)+, R1
+1$:	TST	(R1)+
+2$:	ADD	R0, R1
+	MOV	(R1)+, R5
+	BEQ	E.4TRC
+	CMP	R5, SYNAM0
+	BNE	1$
+	CMP	(R1)+, SYNAM1
+	BNE	2$
+	BR	SEC.4T		; Symbol is found
+
+ASL6.:	MOV	#6, R2
+1$:	ASL 	R1
+	SOB	R2, 1$
+	BR	E.RTI5
+
+OFFW.:	.EXPR
+	SUB	R5, R1
+	ASR	R1
+	BCS	ERR.A2		; Odd offset
+	BR	SAV.R3
+
+SYMB.:	.SYMP
+	BCS	SV.R3C
+ERR.A2:	.ERR	A
+
+ERR.U:	.ERR	U		; Undefined symbol on Second Pass
+
+SYMP.:	.SKWS
+	.CHCLS
+	BR	E.RTI5		; CF=0 here
+	BR	1$
+	BR	1$
+	BR	E.RTI5		; Digit
+1$:	MOV	#SYNAM0, R5
+	MOV	#RSYMCB, R2
+2$:	.A2R50
+	MOV	R1, (R5)+
+	BCS	2$
+SR3SED:	BR	SR3SE
+
+
+FLOAT.:	.SKWS
+	MOV	R3, R5
+1$:	INC	R3
+2$:	.ALNUM
+	BCS	1$
+	.SKIPP	'.
+	BEQ	2$
+	.SKIPP	'-
+	BEQ	2$
+	.SKIPP	'+
+	BEQ	2$
+	MOV	R3, R3.OFF(SP)	; Save end of token
+	MOV	R3, R4
+	SUB	R5, R4		; R4: token length
+	PUSH	R5, R4		; Stack: SPtr, token length
+	CALL	$PACK           ; Try to interpret as DOUBLE
+	TST	(SP)+		; Pop unused word
+	SUB	R5, R3
+	SUB	R3, R4
+	BNE	ERR.A2
+	MOV	#TMPFLT, R1
+	MOV	R1, R2
+	CMP	(R4)+, (R4)+	; R4 = 4
+3$:	POP	(R2)+
+	SOB	R4, 3$
+E.RTI6:	BR	E.RTI5
+
+
+;!!!R NCHAR.:	.CKCOM
+;!!!R ERR.A:	.ERR	A
+;!!!R 	BR	E.RTI5
+
+
+ATOI.:	CALL	$ATOI
+	MOV	R5, R1
+	TST	R0
+	BNE	SAV.R3
+SR3SE:	SEC
+SV.R3A:	BR	SAV.R3
+
+
+
+REXPR.:	.EATP	'%
+	BEQ	2$
+	.SYMP
+	BCC	EXPR.
+	.FIND2	TSYM
+	BCC	EXPR.1
+	MOV	(R1)+, R5
+	TST	(R1)
+	BEQ	EXPR.2
+	MOV     R5, R1          ; Register Number
+	BR      SR3SE           ; SEC, SAV.R3
+2$:	.EXPR			; Register number
+SR3SEA:	BR	SR3SE		; SEC, BR SAV.R3
+
+
+EXPR.:	.TERM
+EXPR.1:	MOV	R1, R5
+EXPR.2:	MOV	R3, R3.OFF(SP)
+	.RCHR
+	BEQ	R5R1
+	.SWITCH
+	.WORD	6
+	.CASE	'+, BINADD
+	.CASE	'-, BINSUB
+	.CASE	'*, BINMUL
+	.CASE	'/, BINDIV
+	.CASE	'&, BINAND
+	.CASE	'!, BINOR
+R5R1:	MOV	R5, R1
+	CLC
+E.RTI7:	BR	E.RTI6
+BINADD:	.TERM
+	ADD	R1, R5
+	BR	EXPR.2
+BINSUB:	.TERM
+	SUB	R1, R5
+	BR	EXPR.2
+BINAND:	.TERM
+	COM	R1
+	BIC	R1, R5
+	BR	EXPR.2
+BINOR:	.TERM
+	BIS	R1, R5
+	BR	EXPR.2
+BINMUL:	ADD	#$DMUL-$DDIV-'*+'/, R1
+BINDIV:	ADD	#$DDIV-'/, R1
+	MOV	R1, MULDI1
+	MOV	R5, R4
+	JSR	R4, $ID		; Destroys R1
+	.WORD	1$
+1$:	.TERM
+	MOV	R1, R4
+	JSR	R4, $ID
+MULDI1:	.WORD	$DMUL, $DI, 1$		; Self-modified code
+1$:	POP	R5
+	BR	EXPR.2
+
+TERSYM:	.SYMB
+	.FIND2	TSYM
+	BCS	MR1S3		; MOV (R1), R1; BR SAV.R3
+TERSY1:	TSTB	PASSN
+	BNE	ERR.U
+	CLR	R1
+	BR	SV.R3A
+
+
+TERM.:	.SKWS
+	.CHCLS
+	BR	TERM2		; Non-alnum
+	BR	TERSYM
+	BR	TERSYM
+	.LCLP		; Digit
+	BCS	R.LCL
+	PUSH	R3
+1$:	INC	R3
+	.CHCLB			; skip digits
+	BR	2$		; Other
+	BR	2$		; Letter
+	BR	1$		; Digit
+2$:	MOVB	(R3), R1	; R1: char after digits
+	POP	R3
+	CMPB	R1, #'.
+	BEQ	R.DEC
+;; Parse integer
+	MOVB	RADIX, R1
+	.SWITCH
+	.WORD	3
+	.CASE	2, R.BIN
+	.CASE	8., R.OCT
+	.CASE	10., R.DEC
+;	.SBYTE	16., R.HEX
+R.HEX:	CLR	R5
+1$:	.ALNUM
+	BCC	R5R1S3
+	CMPB	R1, #'A
+	BLO	2$
+	SUB	#'A-'0-10., R1
+2$:	SUB	#'0, R1
+	ASL	R5
+	ROL	R5
+	ROL	R5
+	ROL	R5
+	ADD	R1, R5
+	BR	1$
+
+;; Local Label ddd$ Term
+R.LCL:  MOV	R1, R2
+	MOV	LCLRGN, R4
+1$:     MOV	-(R4), R1	; R1: value
+	MOV	-(R4), R0
+	BEQ	TERSY1
+	CMP	R0, R2
+  	BEQ	SV.R3A
+	BR	1$
+
+
+R.DEC:	.ATOI
+	.SKIPP	'.
+SV.R3B:	BR	SV.R3A
+
+
+R.BIN:	ADD	#$CBIN - $COCT, R0
+R.OCT:	ADD	#$COCT, R0
+	CALL	(R0)
+R5R1S3:	MOV	R5, R1
+SV.R3D:	BR	SV.R3B
+
+
+
+
+;; Non-alphanum
+TERM2:	.RCHR
+	.SWITCH
+	.WORD	6
+	.CASE	C.LT, LESS	; '<
+	.CASE	'-, MINUS
+	.CASE	'+, TERM.
+	.CASE	'^, CARET
+	.CASE	'', QUOTE
+	.CASE	'", DQUOTE
+	.ERR	A
+
+LESS:	.EXPR			; <expr>
+	.EAT	'>
+	BR	SV.R3D
+
+
+MINUS:	.TERM
+	NEG	R1
+	BR	SV.R3D
+DQUOTE:	BISB	(R3)+, R0
+	SWAB	R0
+	BISB	(R3)+, R0
+	SWAB	R0
+	BR	M.R0R1
+QUOTE:	BISB	(R3)+, R0
+M.R0R1:	MOV	R0, R1
+	BR	SV.R3D
+
+CARET:  .RCHR
+	BIC	#40, R1		; To Uppercase
+	.SWITCH
+	.WORD	7
+	.CASE	'O, CAR.O
+	.CASE	'B, CAR.B
+	.CASE	'X, CAR.X
+	.CASE	'D, CAR.D
+	.CASE	'F, CAR.F
+	.CASE	'C, CAR.C
+	.CASE	'R, CAR.R
+ERR.A4:	.ERR	A
+
+
+;; ^C handler
+CAR.C:	.TERM
+	COM	R1
+	BR	SV.R3D
+
+;; ^B handler
+CAR.B:	ADD	#2.-'B-8.+'O, R1
+;; ^O handler
+CAR.O:	ADD	#8.-'O-16.+'X, R1
+;; ^X handler
+CAR.X:	ADD	#16.-'X-10.+'D, R1
+;; ^D handler
+CAR.D:	ADD	#10.-'D, R1
+	MOV	#RADIX, R0
+	PUSH	(R0)
+	MOV	R1, (R0)	; RADIX = R0
+	.TERM
+	POP	(R0)		; Restore RADIX
+	BR	SV.R3D
+
+;; ^F handler
+CAR.F:	.FLOAT
+MR1S3:	MOV	(R1), R1	; First word of Float
+	BR	SV.R3D
+
+
+;; ^R handler
+CAR.R:	MOV	#CARRCB, R2		; Parse Space char too
+	.A2R50
+	MOV	R1, R5
+1$:	.A2R50			; Ignore rest
+	BCS	1$
+	BR	R5R1S3		; MOV R5, R1; Save R3
+
+
+
+;; Handler of	.EAT ch
+I.EAT:	MOV	(SP), R2
+	TST	-(R2)
+	BMI	EATP
+	.SKWS
+EATP:	CMPB	(R2), (R3)+
+	BEQ	8$
+	DEC	R3
+	BIT	#400, (R2)
+	BEQ	ERR.A4
+8$:	MFPS	2(SP)
+	RTI
+
+;; Expand current line using Macro arguments
+;; INPUT: R4: Destingation line
+;; RETURNS: R1: Cursor position in original string on the next line
+EXPAND:
+        ;;Parse args
+        ;MOV	R3, CURSOR
+        PUSH	R4
+        ADD	#MAXLIN, (SP)		; (SP): Upper bound
+1$:
+2$:	MOVB	(R3), R1
+	.CHCLS
+	BR	4$	; Other
+	BR	8$	; . or $
+	BR	8$
+	BR	4$	; Digit
+8$:     CLR	R0		; flag - was macro arg
+	CALL	IMSYMP
+	BCS	9$		; Non-argument
+16$:	MOV	R3, R5
+	SUB	R2, R5
+	BR	11$
+9$:	INC	R0
+	BR	12$
+11$:	MOVB	(R2)+, (R4)+
+	SOB	R5, 11$
+12$:	.SKIPP	''
+	BNE	2$
+	TST	R0
+	BNE	2$		; Skip '
+	CALL	IMSYMP
+	BCS	9$
+	MOVB	#'', (R4)+
+	BR	16$
+
+	MOV	R3, R2
+	.SYMB
+;	.FIND	MACARG
+	BCC	7$
+3$:	DEC	R2
+	BEQ	1$		; arg len == 0
+	MOVB	(R1)+, (R4)+
+	BR	3$
+
+7$:	MOVB	(R2)+, (R4)+
+	CMP	R2, R3
+	BLO	7$
+	BR	1$
+4$:	MOVB	(R3)+, (R4)+
+	CMPB	R1, #C.NL
+	BNE	1$
+6$:	;MOV	#TMPBUF, R3
+	;CALL	NXLINE
+	;MOV	CURSOR, R3
+	MOV	R3, R1
+	CLRB	(R4)
+	MOV	R4, EXPCUR
+	CMP	R4, (SP)+
+	BLOS	RET.11
+	.ERR	L		; Expanded line is too long
+
+
+;; Evaluate condition
+;; If true sets CF, ZF
+;; If false clears CF, ZF
+EVLCND:	.SYMB
+	.FWOR
+S.COND:	.RAD50	"EQ ""NE ""GT ""LE ""GE ""LT ""DF ""NDF""P1 ""P2 ""B  ""NB ""IDN""DIF"
+	.WORD	0
+	BCC	ERR.A4
+	ASR	R1
+	BCC	3$
+	PUSH	#NOT		; Odd symbols are negations of Event
+3$:	.EATP	<',>
+	MOVB	CNDHAN(R1), (PC)
+	BR	.		; Self-modified code
+CNDBR:
+
+DF:	.SYMB
+	.EATP	<',>
+	.FIND2	TSYM
+	BR	NOT
+	RETURN		;!!!TODO Process &, !
+
+
+GT.:	.EXPR
+	BGT	T.
+	BR	F.
+
+GE.:	.EXPR
+	BGE	T.
+	BR	F.
+
+EQ.:	.EXPR
+EQ.1:	BEQ	T.
+F.:	.WORD	260 ! FLAG.C ! FLAG.Z		; SEC; SEZ
+RET.11:	RETURN
+
+P1.:	TSTB	PASSN
+	BR	EQ.1
+
+NOT:	BCC	F.
+T.:	.WORD	240 ! FLAG.C ! FLAG.Z		; CLC; CLZ
+RET.10:	RETURN
+
+
+B.:	.SKWS
+	MOV	R3, R0
+	INC	R0
+1$:	.EATP	<',>
+	BEQ	2$
+	CMPB	(R3)+, #C.SP
+	BHI	1$
+2$:	CMP	R3, R0
+	BR	EQ.1
+
+
+;; Substitute Symbol if found in MARGS into address in R4
+;; SYMP for '-concatenation purposes
+;; Returns CF=1 if a symbol has been substituted
+IMSYMP:	MOV	R3, R2
+	.SKWS
+	CMP	R3, R2
+	BHI	RET.12
+	.SYMP
+	BCC	RET.12
+	MOV	MARGS, R0
+2$:	MOV	(R0)+, R1	; R1: first word of arg name
+	BEQ	CLC.RE		; CLC; RETURN   - symbol is not A Macro arg
+	PUSH	(R0)+
+	MOV	(R0)+, R5	; R1: arg length + 1
+	ADD	R5, R0
+	BIC	#1, R0		; R0: tail of the list
+	CMP	(SP)+, SYNAM1
+	BNE	2$      	; Go to next arg
+	CMP	R1, SYNAM0
+	BNE	2$      	; Go to next arg
+	BR	4$
+3$:	MOVB	-(R0), (R4)+	; copy arg value to destination
+4$:	SOB	R5, 3$
+SEC.RE:	CLR	R1
+	SEC
+RET.12:	RETURN
+CLC.RE:	CLC
+	RETURN
+
+;; .RADIX-50 char reading callback
+;; OUTPUT:  CF=1 and R1: RADIX-50 code on `<expr>`
+;;       or CF=0 and R1: ASCII char of 0 on EoS
+R50CBA: CLRB	R50LIM
+R50CB:	TSTB	R50LIM
+	BNE	4$	; Inside string
+	.EATP	'<
+	BNE	3$
+	DEC	R3
+	.TERM
+	CMP	R1, #50
+	BLO	5$
+	.ERR	Q
+3$:	.CKCOM
+	BR	6$
+	MOVB	(R3)+, R50LIM
+	BR	R50CB
+6$:	DEC	R3
+5$:	RETURN
+4$:	MOVB	(R3)+, R1
+	CMPB	R1, R50LIM
+	BEQ	R50CBA
+	DEC	R3
+;; ^R Callback
+CARRCB:	.SKIPP	C.SP
+	BEQ	CLR1.R
+;; Symbol reader callback, invoked by A2R50.
+RSYMCB:	.CHCLS
+	BR	CLR1.R
+	BR	6$		; . OR $
+	BR	4$		; Letter
+	ADD	#35+'A-'0, R1	; Digit
+4$:	ADD	#1-'A, R1
+	BR	INC3.R
+6$:	CMPB	R1, #'$
+	BEQ	7$
+	ADD	#1-'.+'$, R1
+7$:	ADD	#33-'$, R1
+INC3.R:	INC	R3
+	RETURN
+CLR1.R:	CLR	R1
+RET.0:	RETURN
+
+
+;; Parse first part of SSDD instruction
+SS:	.ASL6
+	BIS	R1, R0
+;; Calc address mode
+NTYP:	.EATP	'@
+	BNE	1$
+	BIS	#10, R0
+1$:	MOV	R3, R4			; Save Cursor
+	.RCHR
+	.SWITCH
+	.WORD	3
+	.CASE	'#, IMM
+	.CASE	'-, DDMIN
+	.CASE	'(, DDLPAR
+	DEC	R3
+	.REXPR
+	BCC	EXPR
+NTYP8:	BISB	R1, R0
+	RETURN
+
+;; '# handler
+IMM:	BIS	#27, R0
+	.EXPR
+	BR	OUTW
+
+;; '- handler
+DDMIN:  .EATP	'(
+	BEQ	AUTDEC
+	MOV	R4, R3		; Restore Cursor
+	.EXPR
+EXPR:	.EATP	'(
+	BNE	REXPR1
+	BIS	#60, R0
+	MOV	R1, (R5)+	; lab(Rx)
+AUTDEC:	BIS	#40, R0		; -(Rx)
+INDREG:	.REG			; (Rx) handler
+	BIS	R1, R0
+	.EAT	')
+	RETURN
+
+REXPR1:	BIT 	#70, R0
+	BNE	3$		; @lab
+	BIS	#37, R0		; R0: addr mode 37
+	TSTB	AMA
+	BNE	OUTW
+	BIC	#77, R0
+3$:	BIS	#67, R0		; addr mode 67
+	SUB	R5, R1
+	SUB	#2, R1
+OUTW:	MOV	R1, (R5)+
+RET.5:	RETURN
+
+DDLPAR:	CALL	INDREG
+	BIS	#20, R0
+	.EATP	'+
+	BEQ	NTYP8		; (Rx)+
+	SUB	#10, R0
+	BR	NTYP8
+
+
+;; Bind Symbol SYNAM0..1 to string in arglist
+;; Input: R2: limiter; R4: arglist
+;; Corrupts: R0, R1
+BIND:	POP	R1			; R1: return address
+	MOV	R5, AINSTR		; Save R5
+	MOV	SP, R0
+	MOV	SP, R5
+2$:	CMPB	(R4), #',
+	BEQ	4$
+	CMPB	(R4), R2
+	BEQ	4$
+	CMPB	(R4), #C.SP
+	BLO	5$
+	CMP	R5, SP
+	BNE	3$
+	TST	-(SP)
+3$:	MOVB	(R4)+, -(R5)
+	BR	2$
+4$:	INC	R4
+5$:	SUB	R5, R0
+	INC	R0
+	PUSH	R0, SYNAM1, SYNAM0 	; Save length + 1, Symbol name
+	MOV	AINSTR, R5
+	JMP	(R1)
+
+
+I.EMT:	PUSH	R5
+	MOV	2(SP), R5
+	CMP	-(R5), #OP.EMT + 14	; "EMT 14" opcode
+	BEQ	EMT14
+	JMP	100114			; Continue default EMT processing
+EMT14:	CALL	100230			; default "EMT 14" skipping interrupt initializing to preserve our ISRs
+	POP	R5
+	RTI
+
+I.KBDA:	CMPB	$KBDAT, #$K.TAB & 177
+	BEQ	1$
+	JMP	$APISR			; Monitor's Keyboard AP2 ISR
+1$:	MOV	#400 + $K.TAB, $KEY	; $TKEY = 1
+	RTI
+
+;; Order does matter
+ETEXT:	.WORD	CODE-2	; End of source code
+TEXT:	.WORD	CODE-2-<UTEXT-ITEXT>	; Start of source code
+CURSOR:	.WORD	CODE-2-<UTEXT-ITEXT>
+
+
+TRAPS:	.WORD	LCLP.	, $SW.C0, CHCLB., CURBO., CACOL., SEL.	, SYMP.	, CLSEL.
+	.WORD	ATOI.	, FIND2., SKWS.	, $SW.C1, FWOR.	, FDWOR., CHCLS., ASK.
+	.WORD	REXPR.	, ASL6.	, FILE.	, CKCOM., EXPR.	, SYMB.	, $COMMA, $LPAR
+	.WORD	REG.	, ASSIG., POCOL., SUBR.	, A2R50., GCHR.	, RCHR.	, FLOAT.
+	.WORD	ALNUM.	, ARRAY., ALIGN., FIND.	, SWITC., TERM.	, OFFW.	, KNEST.
+	.WORD	BODY.
+	;!!!R NCHAR.
+
+OPCOD0:	.WORD	0, 1, 5, 207, 104400, 006400, 101400, 103000, 4700, 300, 106700, 106400
+OPCODV:	.WORD	104000, 200, 77000, 4000, 74000, 6, 16, 100, 6700
+OPCOD1:	.BYTE 	2, 3, 4, 6, 240, 241, 242, 244, 250, 257, 261, 262, 264, 270, 277
+OPCODB:	.BYTE 	206, 207, 207, 1, 2, 3, 4, 5, 6, 7, 200, 201, 202, 204, 205		; Branch opcodes
+;OPCOD4:	.BYTE 	50, 51, 52, 53, 54, 55, 56, 57, 60, 61, 62, 63
+CNDHAN:	.SBYTE	EQ.-CNDBR/2, GT.-CNDBR/2, GE.-CNDBR/2, DF-CNDBR/2, P1.-CNDBR/2, B.-CNDBR/2
+PREHAN:	.SBYTE	MACRO-PREBR/2, IRP-PREBR/2, IRPC-PREBR/2, REPT-PREBR/2
+DIRHAN:	.SBYTE	ENABL-DIRBR/2, ENABL-DIRBR/2, ASCII-DIRBR/2, ASCIZ-DIRBR/2, FLT-DIRBR/2, END-DIRBR/2
+	.SBYTE	BYTE-DIRBR/2, BLKB-DIRBR/2, FLT-DIRBR/2, IIF-DIRBR/2, RADIX.-DIRBR/2
+	.SBYTE	MEXIT-DIRBR/2, NCHR-DIRBR/2, NTYPE-DIRBR/2, ERROR-DIRBR/2,  EVEN-DIRBR/2
+	.SBYTE	ODD-DIRBR/2, REM-DIRBR/2, BLKW-DIRBR/2,  RAD50-DIRBR/2, WORD-DIRBR/2
+OPHAN0:	.SBYTE	H.R-OPBR0/2, H.R-OPBR0/2, H.R-OPBR0/2, H.R-OPBR0/2
+	.SBYTE	H.EMT-OPBR0/2, H.MARK-OPBR0/2, H.BRB-OPBR0/2, H.BRB-OPBR0/2
+	.SBYTE	H.DDB-OPBR0/2, H.DDB-OPBR0/2, H.DDB-OPBR0/2, H.DDB-OPBR0/2
+OPHANV:	.SBYTE	H.EMT-OPBR0/2, H.REG-OPBR0/2, H.SOB-OPBR0/2, H.RDD-OPBR0/2
+	.SBYTE	H.RDD-OPBR0/2, HSSDDB-OPBR0/2, HSSDDB-OPBR0/2, H.DDB-OPBR0/2
+	.SBYTE	H.DDB-OPBR0/2
+
+AP2.2:	.BYTE	1, 202
+AP2.3:	.BYTE	1, 236
+AP2.4:	.BYTE	1, 234
+AP2.5:	.BYTE	1, 235
+AP2.7:	.BYTE	1, 237
+
+;; Register Symbols
+	.EVEN
+SYMREG:	.RAD50	"R0 ""R1 ""R2 ""R3 ""R4 ""R5 ""SP ""PC "
+IMGEND:
+
+.IIF NE C$BK10	.IIF GT IMGEND-40000 .ERROR	; The image exceeds the bounds of the code memory
+
+;; These vars initialized on every Pass
+LCLRGN:	.WORD	TLCL	; Current Local Labels region
+MACLCL:	.WORD	30000.	; Next Local Label number
+EXPCUR:	.WORD	0	; Address of next expansion in EXPBUF
+RADIX:	.WORD	8.	; Initialized at Run-Time
+
+TSYM:
+
+
+
+
+S.DOT	= TSYM + <10*10>
+AINSTR	= S.DOT + 4
+
+.END	START

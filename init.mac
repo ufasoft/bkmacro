@@ -1,0 +1,113 @@
+;;; (c) 1990-2024 Ufasoft https://ufasoft.com, Sergey Pavlov mailto:dev@ufasoft.com
+;;;
+;;; SPDX-License-Identifier: MIT
+;;;
+;;; BkMacro. BK-0010.01 Macro Assembler
+;;; Initialization code, discarded after starting
+
+
+INIT:   CMP	160000, #104405	; Check some Vilnus BASIC ROM - specific word
+	BEQ	4$
+	MOV	#BK10E, R1
+	EMT	20		; .PRINT
+	.EXIT
+
+;; Print Title in the Status Line
+4$:	EMT	14			; Init Monitor
+
+
+	MOV	#ETITLE-TITLE-1, R1
+5$:	MOVB	TITLE-1(R1), R0
+	EMT	22
+	SOB	R1, 5$
+
+;; Print Help
+P.HELP:	.TTYOUT	#C.FF		; Clear screen
+	MOV	#HELP, R5
+	CLR	R2
+	BR	3$
+1$:	CMPB	(R5), #C.NL
+	BNE	2$
+	INC	R2		; ++Y
+	INC	R5
+3$:	MOV	#35., R1
+	EMT	24		; Set Cursor position
+2$:	MOVB	(R5)+, R0
+	.TTYOUT
+	BNE	1$
+	MOV	#-1, R1
+	MOV	R1, R2
+	EMT	24		; Set Cursor position out of screen
+	CLRB	$F.BLK		; To free space in Status Line
+
+	CLR	0		; used as Keyboard delay counter
+	MOV	OP.NOP, START
+	MOV	OP.NOP, START+2
+	MOV	TEXT, R1
+	MOVB	#C.NL, -(R1)
+
+	MOV	#I.EMT, 30
+
+;; Init AP2 keys
+	MOV	#$AP2CU + <2 * 2>, R1
+	MOV	#AP2.2, (R1)+
+	MOV	#AP2.3, (R1)+
+	MOV	#AP2.4, (R1)+
+	MOV	#AP2.5, (R1)+
+	MOV	#AP2.7, $AP2CU + <7 * 2>
+
+	MOV	#I.STOP, 4
+	MOV	4, 10
+	MOV	#I.TRAP, 34
+;	MOV	#I.KBD, 60
+;	POP	104, R3
+;	MOV	#12, 372
+	MOV	#I.KBDA, $K2ISR
+
+	MOV	#ASTKUP, SP
+	INCB	$F.HID		; Hide cursor
+
+;;!!!O
+	CLR	CLPSIZ
+	CLR	SEL
+	CLR	ESEL
+	CLRB	ERRNO
+
+	JMP 	RESET1
+
+BK10E:	.ASCIZ	<C.CR><C.NL><C.CY.B><C.CY.K>/-0010.01 Vilnus BASIC 1986 firmware is required/<C.CR><C.NL>
+
+
+TITLE:	.ASCIZ	"BkMacro 2024.4  ufasoft.com/bkmacro"
+ETITLE:
+
+HELP:	.BYTE	204		; Show pseudo-graphics chars
+	.ASCII	"(c) 1990-2024 Sergey Pavlov"<C.NL>
+	.ASCII	" "<C.NL>
+	.ASCII	<$K.DEL>"      Delete"<C.NL>
+	.ASCII	"AP2-"<$K.DEL>"  Delete Line"<C.NL>
+	.ASCII	<C.CY.W><C.CY.A><C.CY.G>"    Page Up"<C.NL>
+	.ASCII	<C.CY.S><C.CY.B><C.CY.R>"    Page Down"<C.NL>
+	.ASCII	"AP2-"<C.CY.S><C.CY.B><C.CY.R>" Bottom"<C.NL>
+	.ASCII	"BC     Start of line"<C.NL>
+	.ASCII	"AP2-BC End of line"<C.NL>
+	.ASCII	"AP2-2  Save .MAC"<C.NL>
+	.ASCII	"AP2-3  Open .MAC"<C.NL>
+	.ASCII	"AP2-4  Exit"<C.NL>
+	.ASCII	"AP2-5  Run"<C.NL>
+	.ASCII	"AP2-7  Compile & Save .BIN"<C.NL>
+	.ASCII	"AP2-"<$K.UP><$K.DO><$K.LE><$K.RI>"  Select"<C.NL>
+	.ASCII	<C.CY.S><C.CY.U>"-A   Select all"<C.NL>
+	.ASCII	<C.CY.K><C.CY.T>"     Copy"<C.NL>
+	.ASCII	<C.CY.S><C.CY.U>"-U   Cut"<C.NL>
+	.ASCII	<C.CY.S><C.CY.U>"-B   Paste"<C.NL>
+	.ASCII	<C.CY.S><C.CY.U>"-F   Search"<C.NL>
+	.ASCII	<C.CY.S><C.CY.U>"-G   Search again"<C.NL>
+	.ASCII	<C.CY.S><C.CY.T><C.CY.O><C.CY.P>"   Break & go to Editor"<C.NL>
+	.BYTE	0
+
+	.BYTE	C.NL
+ITEXT:
+	.INCLUDE /exampl.inc/
+UTEXT:	.BYTE	C.NL, 0		; End of source code
+	.EVEN
