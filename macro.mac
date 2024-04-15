@@ -303,8 +303,8 @@ RETADR:	BR	START							; in case if autorun does not work (loaded on BK-0011)
 
 START:	JMP	INIT
 
-;.	= 24756
-.	= 10000
+.	= 20000
+;.	= 10000
 	.WORD	762			; start address
 	.WORD	IMGEND - RETAD2		; module length
 RETAD2:	BR	START2							; in case if autorun does not work (loaded on BK-0011)
@@ -2119,8 +2119,6 @@ EXPCUR:	.WORD	0	; Address of next expansion in EXPBUF
 RADIX:	.WORD	8.	; Initialized at Run-Time
 
 TSYM:
-
-
 
 
 S.DOT	= TSYM + <10*10>
