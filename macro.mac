@@ -37,7 +37,6 @@ TMAC	= 60000		; Macros
 ;; Local Labels Region. Grows downward
 TLCL	= 72460		; == 30000. Used to init MACLCL
 
-;!!!R MACARG	= 60000		; Macro arguments
 
 EXPBUF	= 73000		; Macro expansion buffer
 
@@ -110,7 +109,6 @@ SYNAM1	= 77762		; 2nd RADIX-50 word of parsed Symbol
 .ENDM
 
 
-
 ;; Skip whitespace
 .MACRO	.SKWS
 	TRAP	112
@@ -121,12 +119,6 @@ SYNAM1	= 77762		; 2nd RADIX-50 word of parsed Symbol
 .MACRO	.CKCOM
 	TRAP	123
 .ENDM
-
-;; Skip whitespace;
-;; If the next char is ';' or NL then .ERR A
-;!!!R .MACRO	.NCHAR
-;!!!R 	TRAP	100
-;!!!R .ENDM
 
 ;; Skip whitespaces, read next char and check it is `ch`
 ;; Corrupts R2
@@ -159,7 +151,6 @@ SYNAM1	= 77762		; 2nd RADIX-50 word of parsed Symbol
 .MACRO	.FDWOR
 	TRAP	115
 .ENDM
-
 
 .MACRO	.R50	s, a
 	.RAD50	s
@@ -199,13 +190,6 @@ SYNAM1	= 77762		; 2nd RADIX-50 word of parsed Symbol
 .MACRO	.ASL6
 	TRAP	121
 .ENDM
-
-;.MACRO	.PRINT	msg
-;	TRAP	116
-;	.ASCIZ	msg
-;	.EVEN
-;.ENDM
-
 
 .MACRO	.ASK	msg
 	TRAP	117
@@ -263,11 +247,6 @@ SYNAM1	= 77762		; 2nd RADIX-50 word of parsed Symbol
 	TRAP	147
 .ENDM
 
-;; Unnest block
-.MACRO	.UNEST	;;!!!r?
-	TRAP	151
-.ENDM
-
 ;; Expand following Macro or Loop body lines until .ENDR or .ENDM and then translate them
 ;; INPUT: R3: position on line before the Body
 .MACRO	.BODY
@@ -303,7 +282,7 @@ RETADR:	BR	START							; in case if autorun does not work (loaded on BK-0011)
 
 START:	JMP	INIT
 
-.	= 20000
+.	= 23000
 ;.	= 10000
 	.WORD	762			; start address
 	.WORD	IMGEND - RETAD2		; module length
@@ -423,8 +402,6 @@ RESET1:
 .ENDM
 
 
-
-
 ;; Compile the asm code
 ;; OUTPUT: R2: #B.BIN+2
 ASSEMB:
@@ -499,7 +476,6 @@ BEQPAR:	BEQ	PARES1
 	.ERR	M
 
 
-
 ;; .MACRO symbol  args...
 MACRO:	INCB	(R0)		; INCB MACLV
 	.SYMB
@@ -537,7 +513,6 @@ PAREST:	;.EATP	<',>
 	.CKCOM
 RET.6:	RETURN
 	JMP	FALLWO		;!!!O
-
 
 
 REPT:	.EXPR
@@ -593,8 +568,6 @@ PRESY0:	TSTB	(R4)		; TSTB MEXPLV
 	BR	.
 PREBR:
 
-
-
 ;; Complete Repeat directives
 ;; R4: Return address
 ENDREP:	INCB	MACLV		; To ignore body until .ENDR
@@ -642,7 +615,6 @@ LET:	.KNEST
 	MOV	R1, (R2)
 	MOV	AINSTR, R5	; Process `. = <expr>` case
 	BR	CKRES0
-
 
 ;PRE1SY:	.FDWOR
 ;	.RAD50	".ENDM "".ENDR "
@@ -720,8 +692,6 @@ IFF.:	TST	(R4)		; TST CNDMSK
 	MOV	PC, (R2)	; CNDMOD = False
 	BR	CKRES3
 
-
-
 ;; Parse line inside TEXT
 NXLINE:	TSTB	(R3)
 	BEQ	EOT
@@ -754,7 +724,6 @@ IF1:	CALL	EVLCND
 IFT.:   TST	(R4)		; TST CNDMSK
 IFT.1:	SXT	CNDMOD		; R2 is corrupted by .EATP
 CKRES3:	BR	CKRES2
-
 
 
 CKMOD:	TST	(R2)		; TST CNDMOD
@@ -967,19 +936,8 @@ CKRES5:	BR	CKRES4
 
 
 
-; ;; .MDELETE name1, name2, ...
-;MDELE:	.SYMB
-;	.FIND2	TMAC
-	;BCS	1$
-;	.ERR	U
-;1$:	CLR	(R1)
-;	.COMMA	MDELE
-
-
 ;; .ERROR something
 ERROR:	.ERR	P
-
-
 
 
 
@@ -1007,10 +965,6 @@ ASCII:	.GCHR         		; ';' is valid limiter for first iteration
 	BEQ	5$
 	MOVB	R1, (R5)+
 	BR	2$
-
-
-
-
 
 
 ;; Treat unrecognized FOO as .WORD FOO
@@ -1056,14 +1010,11 @@ H.SOB1:	CMP	R1, #100
 	BLO	BISBR4
 	.ERR	T
 
-
 H.REG:	.REG
 BISBR4:	BISB	R1, R0
 H.R:
 BIS0:	BIS	R0, @AINSTR
 	BR	CKRES5
-
-
 
 
 ;; Process 3-char instructions
@@ -1151,7 +1102,6 @@ SEL.:	MOV	#SEL, R4
 9$:	BR	E.RTI
 
 
-
 FILE.:	.CURBO
 	CMP	(R4), #3
 	BEQ	2$		; Read command
@@ -1176,12 +1126,6 @@ KNEST.:	TST	NESTLV
 1$:	MOV	#SKREST, PC.OFF(SP)
 	BR	E.RTI
 
-
-;!!!R UNEST.:	TSTB	MACLV
-;!!!R 	BEQ	E.RTI
-;!!!R 	DECB	MACLV
-;!!!R	UNEST1:	MOV	#SKREST, PC.OFF(SP)	; address of RETURN
-;!!!R	BR	E.RTI
 
 BODY.:	CALL	SKREST		; Make R3 point on Macro/Loop body
 	INCB	MEXPLV
@@ -1468,7 +1412,6 @@ SAV.R3:	MOV	R3, R3.OFF(SP)
 E.RTI5:	BR	E.RTI4
 
 
-
 FIND2.:	TST	(R0)+		; R0 = 4
 FIND.:	TST	(R0)+		; R0 = 2
 	MOV	(R4)+, R1
@@ -1541,18 +1484,12 @@ FLOAT.:	.SKWS
 E.RTI6:	BR	E.RTI5
 
 
-;!!!R NCHAR.:	.CKCOM
-;!!!R ERR.A:	.ERR	A
-;!!!R 	BR	E.RTI5
-
-
 ATOI.:	CALL	$ATOI
 	MOV	R5, R1
 	TST	R0
 	BNE	SAV.R3
 SR3SE:	SEC
 SV.R3A:	BR	SAV.R3
-
 
 
 REXPR.:	.EATP	'%
@@ -1568,7 +1505,6 @@ REXPR.:	.EATP	'%
 	BR      SR3SE           ; SEC, SAV.R3
 2$:	.EXPR			; Register number
 SR3SEA:	BR	SR3SE		; SEC, BR SAV.R3
-
 
 EXPR.:	.TERM
 EXPR.1:	MOV	R1, R5
@@ -1620,7 +1556,6 @@ TERSY1:	TSTB	PASSN
 	CLR	R1
 	BR	SV.R3A
 
-
 TERM.:	.SKWS
 	.CHCLS
 	BR	TERM2		; Non-alnum
@@ -1670,19 +1605,15 @@ R.LCL:  MOV	R1, R2
   	BEQ	SV.R3A
 	BR	1$
 
-
 R.DEC:	.ATOI
 	.SKIPP	'.
 SV.R3B:	BR	SV.R3A
-
 
 R.BIN:	ADD	#$CBIN - $COCT, R0
 R.OCT:	ADD	#$COCT, R0
 	CALL	(R0)
 R5R1S3:	MOV	R5, R1
 SV.R3D:	BR	SV.R3B
-
-
 
 
 ;; Non-alphanum
@@ -1700,7 +1631,6 @@ TERM2:	.RCHR
 LESS:	.EXPR			; <expr>
 	.EAT	'>
 	BR	SV.R3D
-
 
 MINUS:	.TERM
 	NEG	R1
@@ -1753,7 +1683,6 @@ CAR.F:	.FLOAT
 MR1S3:	MOV	(R1), R1	; First word of Float
 	BR	SV.R3D
 
-
 ;; ^R handler
 CAR.R:	MOV	#CARRCB, R2		; Parse Space char too
 	.A2R50
@@ -1761,7 +1690,6 @@ CAR.R:	MOV	#CARRCB, R2		; Parse Space char too
 1$:	.A2R50			; Ignore rest
 	BCS	1$
 	BR	R5R1S3		; MOV R5, R1; Save R3
-
 
 
 ;; Handler of	.EAT ch
@@ -2079,7 +2007,6 @@ TRAPS:	.WORD	LCLP.	, $SW.C0, CHCLB., CURBO., CACOL., SEL.	, SYMP.	, CLSEL.
 	.WORD	REG.	, ASSIG., POCOL., SUBR.	, A2R50., GCHR.	, RCHR.	, FLOAT.
 	.WORD	ALNUM.	, ARRAY., ALIGN., FIND.	, SWITC., TERM.	, OFFW.	, KNEST.
 	.WORD	BODY.
-	;!!!R NCHAR.
 
 OPCOD0:	.WORD	0, 1, 5, 207, 104400, 006400, 101400, 103000, 4700, 300, 106700, 106400
 OPCODV:	.WORD	104000, 200, 77000, 4000, 74000, 6, 16, 100, 6700
