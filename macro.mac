@@ -616,9 +616,6 @@ LET:	.KNEST
 	MOV	AINSTR, R5	; Process `. = <expr>` case
 	BR	CKRES0
 
-;PRE1SY:	.FDWOR
-;	.RAD50	".ENDM "".ENDR "
-;	.WORD	REST-.-2
 ;; .ENDR [name]
 ENDR:
 ;; .ENDM [name]
